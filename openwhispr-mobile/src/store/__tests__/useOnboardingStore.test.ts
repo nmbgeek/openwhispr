@@ -1,4 +1,5 @@
-import { getStepProgress, useOnboardingStore } from '../useOnboardingStore';
+import { Platform } from 'react-native';
+import { getOnboardingRoute, getStepProgress, useOnboardingStore } from '../useOnboardingStore';
 import { OnboardingService } from '@/utils/onboarding';
 import { logTutorialCompletion } from '@/lib/appsflyer';
 
@@ -21,6 +22,71 @@ jest.mock('@/utils/onboarding', () => ({
   },
 }));
 const service = jest.mocked(OnboardingService);
+
+describe('Android onboarding', () => {
+  const originalOS = Platform.OS;
+  beforeEach(() => {
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+  });
+  afterEach(() => {
+    Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+  });
+
+  it('completes Local setup without any iOS keyboard or tracking steps', async () => {
+    await useOnboardingStore.getState().goNext('get-started');
+    await useOnboardingStore.getState().goNext('welcome');
+    await useOnboardingStore.getState().goNext('microphone');
+    expect(useOnboardingStore.getState().currentStep).toBe('privacy-mode');
+    await useOnboardingStore.getState().chooseMode('private', 'privacy-mode');
+    await useOnboardingStore.getState().goNext('language');
+    expect(useOnboardingStore.getState().currentStep).toBe('private-download');
+    await useOnboardingStore.getState().chooseMode('private', 'private-download');
+    await useOnboardingStore.getState().goNext('notifications');
+    await useOnboardingStore.getState().goNext('create-account');
+    expect(useOnboardingStore.getState().currentStep).toBe('graduation');
+    await useOnboardingStore.getState().finish();
+    expect(useOnboardingStore.getState().finished).toBe(true);
+    expect(logTutorialCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows progress for only supported steps and preserves language numbering during download', () => {
+    expect(getOnboardingRoute('cloud')).toEqual([
+      'get-started',
+      'welcome',
+      'microphone',
+      'privacy-mode',
+      'language',
+      'notifications',
+      'create-account',
+      'graduation',
+    ]);
+    expect(getStepProgress('microphone')).toEqual({ current: 1, total: 4 });
+    expect(getStepProgress('notifications')).toEqual({ current: 4, total: 4 });
+    expect(getStepProgress('private-download')).toEqual(getStepProgress('language'));
+    expect(getStepProgress('keyboard-switch')).toBeUndefined();
+  });
+
+  it.each([
+    ['keyboard-switch', 'privacy-mode'],
+    ['voice-agent', 'privacy-mode'],
+    ['tracking-permission', 'graduation'],
+  ] as const)('recovers a restored %s step at %s', async (step, currentStep) => {
+    service.getProgress.mockResolvedValue({
+      version: 3,
+      step,
+      keyboardInstalled: true,
+      permissionsGranted: { microphone: true, notifications: false },
+    });
+    await useOnboardingStore.getState().hydrate();
+    expect(useOnboardingStore.getState().currentStep).toBe(currentStep);
+  });
+
+  it('returns from privacy choices to microphone instead of keyboard training', async () => {
+    await useOnboardingStore.getState().goToStep('privacy-mode');
+    await useOnboardingStore.getState().goBack('privacy-mode');
+    expect(useOnboardingStore.getState().currentStep).toBe('microphone');
+  });
+});
 
 beforeEach(() => {
   jest.clearAllMocks();

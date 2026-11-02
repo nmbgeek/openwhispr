@@ -3,6 +3,7 @@ import { isDictationAgentEnabled, isNoteChatEnabled } from '@/lib/dictationAgent
 import type { InferenceSelection } from '@/lib/mobileProviders';
 import { localModeDefault, MODE_LABELS, type CloudAccess } from '@/lib/inferenceModes';
 import { isLocalModelKey, LOCAL_MODEL_TITLES } from '@/lib/localModelCatalog';
+import { isMlKitModelKey, ML_KIT_TITLES } from '@/lib/localSpeechModels';
 import { providerDisplayName, type MobileInferenceScope } from '@/lib/mobileProviders';
 import type { ProcessingMode, UserConfig } from '@/types';
 
@@ -168,6 +169,8 @@ export function workflowSummary(
     return MODE_LABELS.openwhispr;
   if (selection.mode === 'local' && isLocalModelKey(selection.modelId))
     return LOCAL_MODEL_TITLES[selection.modelId];
+  if (selection.mode === 'local' && isMlKitModelKey(selection.modelId))
+    return ML_KIT_TITLES[selection.modelId];
   if (activeMode === 'private' && (scope === 'dictation' || scope === 'noteChat'))
     return MODE_LABELS.local;
   if (selection.mode !== 'providers') return MODE_LABELS[selection.mode];

@@ -1,6 +1,7 @@
 import '../global.css';
 import { useEffect, useRef, useState } from 'react';
-import { AppState, useColorScheme } from 'react-native';
+import { AppState, Platform, useColorScheme } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { Stack, router, useSegments } from 'expo-router';
@@ -240,6 +241,7 @@ function RootLayout() {
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
+      {Platform.OS === 'android' ? <StatusBar style="dark" /> : null}
       <OpenWhisprSuperwallProvider>
         <SafeAreaProvider>{renderInner()}</SafeAreaProvider>
         <PermissionAlertMount />

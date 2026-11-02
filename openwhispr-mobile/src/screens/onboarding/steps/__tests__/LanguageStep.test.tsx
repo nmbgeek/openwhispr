@@ -1,4 +1,5 @@
 import { fireEvent, render, waitFor } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import { LanguageStep } from '../LanguageStep';
 
 jest.mock('@/lib/sentry', () => ({ Sentry: { captureException: jest.fn() } }));
@@ -28,6 +29,18 @@ beforeEach(() => {
   mockNext.mockResolvedValue(undefined);
   mockBack.mockResolvedValue(undefined);
   mockSave.mockResolvedValue(undefined);
+});
+
+it('asks Android users to choose languages without claiming keyboard detection', () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+  try {
+    const screen = render(<LanguageStep />);
+    expect(screen.getByText('Pick the languages you want OpenWhispr to recognize.')).toBeTruthy();
+    expect(screen.queryByText(/We picked these from your keyboard/)).toBeNull();
+  } finally {
+    Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+  }
 });
 
 it('restores confirmed languages and goes back without saving edits', async () => {

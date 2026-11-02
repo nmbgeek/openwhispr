@@ -11,6 +11,9 @@
       "ios": {
         "image": "macos-tahoe-26.5-xcode-26.6",
         "buildConfiguration": "Debug"
+      },
+      "android": {
+        "buildType": "apk"
       }
     },
     "preview": {
@@ -18,6 +21,9 @@
       "channel": "preview",
       "ios": {
         "image": "macos-tahoe-26.5-xcode-26.6"
+      },
+      "android": {
+        "buildType": "apk"
       }
     },
     "production": {
@@ -29,6 +35,9 @@
       "ios": {
         "image": "macos-tahoe-26.5-xcode-26.6",
         "resourceClass": "medium"
+      },
+      "android": {
+        "buildType": "app-bundle"
       }
     }
   },

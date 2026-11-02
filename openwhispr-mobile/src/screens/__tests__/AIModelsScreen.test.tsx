@@ -1,6 +1,6 @@
 import React from 'react';
 import { Alert, AppState, Platform, type AppStateStatus } from 'react-native';
-import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, renderAsync, screen } from '@testing-library/react-native';
 
 const mockPush = jest.fn();
 const mockClearCredentials = jest.fn().mockResolvedValue(undefined);
@@ -123,12 +123,13 @@ it('removes every saved provider key after confirmation', async () => {
   expect(mockClearCredentials).toHaveBeenCalledTimes(1);
 });
 
-it('has no provider keys to remove on Android', async () => {
+it('keeps iOS-only model and provider settings off Android', async () => {
   Platform.OS = 'android';
-  render(<AIModelsScreen />);
+  await renderAsync(<AIModelsScreen />);
   expect(screen.getByText('Dictation')).toBeTruthy();
   expect(screen.queryByText('Remove All Provider Keys')).toBeNull();
-  await screen.findByText(/Status: Ready/);
+  expect(screen.queryByText('Local Apple Intelligence')).toBeNull();
+  expect(screen.queryByText('Speaker Separation')).toBeNull();
 });
 
 it('shows what each workflow runs while Local Mode is on', async () => {

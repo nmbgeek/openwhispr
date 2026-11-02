@@ -15,7 +15,7 @@ import {
   getLocalReasoningReadiness,
   getLocalReasoningUnavailableMessage,
 } from '@/lib/localReasoning';
-import type { LocalModelKey } from '@/lib/localModelCatalog';
+import type { LocalSpeechModelKey } from '@/lib/localSpeechModels';
 import { type InferenceSelection, type MobileInferenceScope } from '@/lib/mobileProviders';
 import { getPrivateModeReadiness, getPrivateModeUnavailableMessage } from '@/lib/privateMode';
 
@@ -29,8 +29,9 @@ function isSpeechScope(scope: MobileInferenceScope): scope is SpeechScope {
   return scope === 'dictation' || scope === 'upload';
 }
 
-async function transcriptionModelReady(): Promise<ModeSwitchResult | null> {
-  const readiness = await getPrivateModeReadiness().catch(() => null);
+async function transcriptionModelReady(scope: SpeechScope): Promise<ModeSwitchResult | null> {
+  const model = localSelection(useConfigStore.getState().config, scope).modelId;
+  const readiness = await getPrivateModeReadiness(model ?? 'automatic').catch(() => null);
   if (!readiness) {
     Alert.alert('On-Device Unavailable', 'Unable to check the local model right now.');
     return 'refused';
@@ -42,7 +43,7 @@ async function transcriptionModelReady(): Promise<ModeSwitchResult | null> {
   // Nothing to run yet: open the model list, where every on-device model can be
   // downloaded.
   if (readiness.status === 'missing') {
-    router.push('/(account)/model-download');
+    router.push({ pathname: '/(account)/model-download', params: { scope } });
     return 'needs-model';
   }
   return null;
@@ -96,7 +97,9 @@ async function offerOnDeviceNoteFormatting(): Promise<void> {
 export async function switchWorkflowMode(
   scope: MobileInferenceScope,
   mode: 'openwhispr' | 'local',
+  isStillCurrent: () => boolean = () => true,
 ): Promise<ModeSwitchResult> {
+  if (!isStillCurrent()) return 'refused';
   const { user } = useAuthStore.getState();
   if (mode === 'openwhispr' && accountRequiredForCloud(user)) {
     showAccountRequiredAlert(isSpeechScope(scope) ? 'cloud transcription' : 'cloud AI');
@@ -114,11 +117,12 @@ export async function switchWorkflowMode(
   }
   if (mode === 'local') {
     const blocked = isSpeechScope(scope)
-      ? await transcriptionModelReady()
+      ? await transcriptionModelReady(scope)
       : await appleIntelligenceReady();
     if (blocked) return blocked;
   }
 
+  if (!isStillCurrent()) return 'refused';
   const { config, updateConfig } = useConfigStore.getState();
   const { activeMode, setActiveMode } = useProcessingModeStore.getState();
   if (scope === 'dictation') setActiveMode(mode === 'local' ? 'private' : 'cloud', true);
@@ -136,7 +140,7 @@ export async function switchWorkflowMode(
 // remembered so switching back to On-Device restores it.
 export async function pickLocalModel(
   scope: SpeechScope,
-  model: LocalModelKey | undefined,
+  model: LocalSpeechModelKey | undefined,
 ): Promise<void> {
   const { config, updateConfig } = useConfigStore.getState();
   const selection: InferenceSelection = model

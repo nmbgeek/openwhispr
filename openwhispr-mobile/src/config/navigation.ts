@@ -1,11 +1,23 @@
 import type { NativeStackNavigationOptions } from '@react-navigation/native-stack';
+import { Platform } from 'react-native';
 import { displayFontFamily } from '@/lib/fonts';
+import { APP_BACKGROUND } from '@/config/colors';
 
 export const glassStackOptions: NativeStackNavigationOptions = {
-  headerTransparent: true,
-  headerLargeTitle: true,
-  headerBlurEffect: 'systemMaterial',
-  headerLargeStyle: { backgroundColor: 'transparent' },
+  // Android does not apply iOS automatic ScrollView insets beneath a transparent
+  // native header. Keep the bar in normal layout so settings begin below it.
+  ...(Platform.OS === 'ios'
+    ? ({
+        headerTransparent: true,
+        headerLargeTitle: true,
+        headerBlurEffect: 'systemMaterial',
+        headerLargeStyle: { backgroundColor: 'transparent' },
+      } satisfies NativeStackNavigationOptions)
+    : {
+        headerTransparent: false,
+        headerLargeTitle: false,
+        headerStyle: { backgroundColor: APP_BACKGROUND },
+      }),
   // Without Yowza the family is undefined and titles stay in the system font.
   headerTitleStyle: { fontFamily: displayFontFamily },
   headerLargeTitleStyle: { fontFamily: displayFontFamily },

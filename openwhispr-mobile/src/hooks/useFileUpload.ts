@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Platform } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import { AudioTools } from '../../modules/audio-tools/src';
@@ -144,9 +145,12 @@ export function useFileUpload(options: UseFileUploadOptions = {}) {
         await assertProviderAcceptsFile(file, extension);
       }
 
-      // On-device Opus decoding isn't supported yet; the cloud transcriber
-      // decodes Opus, so route private-mode Opus uploads there instead.
-      if (transcriptionProvider === 'local' && isOggOpus(file.name, file.mimeType, file.uri)) {
+      // Android decodes these files through MediaCodec. iOS still needs an explicit cloud choice.
+      if (
+        Platform.OS === 'ios' &&
+        transcriptionProvider === 'local' &&
+        isOggOpus(file.name, file.mimeType, file.uri)
+      ) {
         throw new Error(
           "Opus audio can't be transcribed on this iPhone yet. Set Uploads to OpenWhispr Cloud in Account → AI Models, then try again.",
         );

@@ -1,9 +1,11 @@
 import { render } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import { router } from 'expo-router';
 import NotesListScreen from '../NotesListScreen';
 
 let mockParams: Record<string, string> = {};
 let mockFabActionPress: ((id: string) => void) | null = null;
+let mockFabActions: Array<{ id: string }> = [];
 const mockState = {
   folders: [],
   spaceFolders: [],
@@ -50,8 +52,15 @@ jest.mock('@/hooks/useManualSyncRefresh', () => ({
 }));
 jest.mock('@/components/ui/Fab', () => ({
   FAB_BOTTOM_PADDING: 0,
-  Fab: ({ onActionPress }: { onActionPress: (id: string) => void }) => {
+  Fab: ({
+    onActionPress,
+    actions,
+  }: {
+    onActionPress: (id: string) => void;
+    actions: Array<{ id: string }>;
+  }) => {
     mockFabActionPress = onActionPress;
+    mockFabActions = actions;
     return null;
   },
 }));
@@ -84,6 +93,18 @@ beforeEach(() => {
 });
 
 describe('NotesListScreen Record meeting', () => {
+  it('keeps native-only meetings out of the Android create menu', () => {
+    const originalOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+    try {
+      mockParams = {};
+      render(<NotesListScreen />);
+      expect(mockFabActions.map((action) => action.id)).toEqual(['note']);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+    }
+  });
+
   it('records into the folder being viewed', () => {
     recordMeeting({ folderId: '5' });
     expect(router.push).toHaveBeenCalledWith({

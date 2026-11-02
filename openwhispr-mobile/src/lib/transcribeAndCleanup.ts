@@ -197,12 +197,15 @@ async function shouldAttemptFusedCloudCleanup(request: TranscriptionRequest): Pr
 async function runSerialTranscribeAndCleanup(
   request: TranscriptionRequest,
   lifecycle: DictationProcessingLifecycle,
+  capturedTranscription?: TranscriptionResponse,
 ): Promise<DictationProcessingResult> {
   lifecycle.onStage?.('transcribing', { fusedCleanup: false });
-  const transcription = await withRetry(
-    () => TranscriptionService.transcribe(request),
-    transcriptionRetry(lifecycle),
-  );
+  const transcription =
+    capturedTranscription ??
+    (await withRetry(
+      () => TranscriptionService.transcribe(request),
+      transcriptionRetry(lifecycle),
+    ));
   lifecycle.onTranscribeDone?.(transcription);
 
   const originalText = transcription.text;
@@ -259,7 +262,11 @@ async function runSerialTranscribeAndCleanup(
 async function runTranscribeAndCleanup(
   request: TranscriptionRequest,
   lifecycle: DictationProcessingLifecycle = {},
+  capturedTranscription?: TranscriptionResponse,
 ): Promise<DictationProcessingResult> {
+  if (capturedTranscription) {
+    return runSerialTranscribeAndCleanup(request, lifecycle, capturedTranscription);
+  }
   if (await shouldAttemptFusedCloudCleanup(request)) {
     lifecycle.onStage?.('transcribing', { fusedCleanup: true });
     try {
@@ -335,6 +342,7 @@ async function runTranscribeAndCleanup(
 async function processTranscriptionJob(
   request: TranscriptionRequest,
   lifecycle: DictationProcessingLifecycle = {},
+  capturedTranscription?: TranscriptionResponse,
 ): Promise<DictationProcessingResult> {
   const captured = snapshotTextInference(request.provider);
   const pinnedRequest: TranscriptionRequest = {
@@ -347,7 +355,7 @@ async function processTranscriptionJob(
   if (request.provider === 'byok' && !request.inferenceRoute) {
     throw new Error('The original provider route is unavailable. Start a new transcription.');
   }
-  const result = await runTranscribeAndCleanup(pinnedRequest, lifecycle);
+  const result = await runTranscribeAndCleanup(pinnedRequest, lifecycle, capturedTranscription);
   result.transcription = {
     ...result.transcription,
     cleanupRoute: pinnedRequest.cleanupRoute,
@@ -376,4 +384,14 @@ export async function transcribeAndCleanup(
     request.provider === 'byok' ? (request.jobId ?? request.clientTranscriptionId) : undefined,
     () => processTranscriptionJob(request, lifecycle),
   );
+}
+
+// Live on-device recognition already produced the final transcript. It follows the same pinned
+// cleanup, cancellation and snippet rules as recorded dictation without decoding the audio again.
+export async function completeRecordedTranscription(
+  request: TranscriptionRequest & { provider: 'local' },
+  transcription: TranscriptionResponse & { provider: 'local' },
+  lifecycle: DictationProcessingLifecycle = {},
+): Promise<DictationProcessingResult> {
+  return processTranscriptionJob(request, lifecycle, transcription);
 }

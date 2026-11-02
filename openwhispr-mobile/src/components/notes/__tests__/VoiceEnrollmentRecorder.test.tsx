@@ -132,6 +132,8 @@ beforeEach(() => {
   mockUseAudioRecording.mockReturnValue({
     isRecording: false,
     isProcessing: false,
+    isLiveTranscription: false,
+    liveLevel: 0,
     currentText: '',
     isSupported: true,
     startRecording,

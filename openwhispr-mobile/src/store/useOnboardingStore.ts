@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { Platform } from 'react-native';
 import {
   FIRST_ONBOARDING_STEP,
   ONBOARDING_VERSION,
@@ -62,22 +63,41 @@ const BACK_DESTINATIONS: Partial<Record<OnboardingStepId, OnboardingStepId>> = {
   'private-download': 'language',
 };
 
+const IOS_ONLY_STEPS = new Set<OnboardingStepId>([
+  'keyboard-intro',
+  'keyboard-switch',
+  'dictation-email',
+  'voice-agent',
+  'tone',
+  'tracking-permission',
+]);
+
+function supportsStep(step: OnboardingStepId): boolean {
+  return Platform.OS === 'ios' || !IOS_ONLY_STEPS.has(step);
+}
+
+// A saved iOS-only step can exist after restoring device data. Resume at the next
+// supported step rather than trapping Android in keyboard setup.
+function supportedStep(step: OnboardingStepId): OnboardingStepId {
+  return STEP_ORDER.slice(STEP_ORDER.indexOf(step)).find(supportsStep) ?? 'graduation';
+}
+
 export function getOnboardingRoute(mode: ProcessingMode | null): OnboardingStepId[] {
-  return STEP_ORDER.filter((step) =>
-    step === 'private-download' ? mode === 'private' : step !== 'paywall',
+  return STEP_ORDER.filter(
+    (step) =>
+      supportsStep(step) && (step === 'private-download' ? mode === 'private' : step !== 'paywall'),
   );
 }
 
 // The optional download shares the language step's number so choosing Local doesn't grow the total.
-const COUNTED_STEPS = STEP_ORDER.filter(
-  (step) => !UNCOUNTED_STEPS.has(step) && step !== 'private-download',
-);
-
 export function getStepProgress(
   stepId: OnboardingStepId,
 ): { current: number; total: number } | undefined {
-  const index = COUNTED_STEPS.indexOf(stepId === 'private-download' ? 'language' : stepId);
-  return index < 0 ? undefined : { current: index + 1, total: COUNTED_STEPS.length };
+  const countedSteps = STEP_ORDER.filter(
+    (step) => supportsStep(step) && !UNCOUNTED_STEPS.has(step) && step !== 'private-download',
+  );
+  const index = countedSteps.indexOf(stepId === 'private-download' ? 'language' : stepId);
+  return index < 0 ? undefined : { current: index + 1, total: countedSteps.length };
 }
 
 const PAYWALL_NEXT_STEPS = ['language', 'notifications', 'create-account'] as const;
@@ -209,6 +229,7 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
       const legacy = (progress.version ?? 1) < 2;
       // Version 2 used this identifier for the combined agent/tone preview.
       if (progress.version === 2 && step === 'voice-agent') step = 'tone';
+      step = supportedStep(step);
       const resumed = {
         hydrated: true,
         finished: false,
@@ -236,7 +257,7 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
       set(resumed);
     },
 
-    goToStep: async (step) => transition(get().currentStep, { currentStep: step }),
+    goToStep: async (step) => transition(get().currentStep, { currentStep: supportedStep(step) }),
 
     goNext: async (from) => {
       const state = get();
@@ -261,7 +282,8 @@ export const useOnboardingStore = create<OnboardingStore>((set, get) => {
     },
 
     goBack: async (from) => {
-      const previous = BACK_DESTINATIONS[from];
+      const previous =
+        Platform.OS !== 'ios' && from === 'privacy-mode' ? 'microphone' : BACK_DESTINATIONS[from];
       if (previous) await transition(from, { currentStep: previous });
     },
 

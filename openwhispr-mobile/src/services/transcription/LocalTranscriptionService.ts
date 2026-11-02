@@ -1,6 +1,15 @@
 import type { ParakeetVersion } from '../../../modules/parakeet-asr/src';
 import type { TranscriptionResponse } from '../../types';
 import type { LocalModelKey } from '../../lib/localModelCatalog';
+import { Platform } from 'react-native';
+import { AndroidSpeech } from '../../../modules/android-speech/src';
+import {
+  isMlKitModelKey,
+  mlKitMode,
+  mlKitLocale,
+  ML_KIT_TITLES,
+  type LocalSpeechModelKey,
+} from '../../lib/localSpeechModels';
 import { getPreferredTranscriptionLanguages } from '../../lib/transcriptionLanguage';
 import { LocalParakeetService } from './LocalParakeetService';
 import { LocalWhisperService } from './LocalWhisperService';
@@ -12,9 +21,15 @@ import {
 } from './localEngine';
 
 export interface LocalEngineDescriptor {
-  engine: 'parakeet' | 'whisper';
+  engine: 'parakeet' | 'whisper' | 'mlkit';
   version?: ParakeetVersion;
   label: string;
+}
+
+function configuredMlKitLocale(): string | null {
+  const { useConfigStore } =
+    require('../../store/useConfigStore') as typeof import('../../store/useConfigStore');
+  return mlKitLocale(useConfigStore.getState().config);
 }
 
 export interface LocalTranscribeOptions {
@@ -24,7 +39,7 @@ export interface LocalTranscribeOptions {
   /** Whisper initial prompt (dictionary/snippet hints). Parakeet has no prompt input — dropped there. */
   prompt?: string;
   /** The model picked for this workflow; unset or unusable means the automatic choice. */
-  model?: LocalModelKey;
+  model?: LocalSpeechModelKey;
 }
 
 function descriptorFor(
@@ -59,7 +74,11 @@ function missingModelError(choice: Extract<LocalEngineChoice, { engine: 'none' }
  */
 export class LocalTranscriptionService {
   static isAvailable(): boolean {
-    return LocalWhisperService.isAvailable() || LocalParakeetService.isAvailable();
+    return (
+      LocalWhisperService.isAvailable() ||
+      LocalParakeetService.isAvailable() ||
+      AndroidSpeech.isAvailable()
+    );
   }
 
   static async getAvailability(): Promise<LocalEngineAvailability> {
@@ -98,6 +117,39 @@ export class LocalTranscriptionService {
     audioUri: string,
     options: LocalTranscribeOptions = {},
   ): Promise<TranscriptionResponse> {
+    if (isMlKitModelKey(options.model)) {
+      const model = options.model;
+      const locale = configuredMlKitLocale();
+      if (Platform.OS !== 'android' || !AndroidSpeech.isAvailable()) {
+        throw new Error(`${ML_KIT_TITLES[model]} is only available in a native Android build.`);
+      }
+      if (!locale) {
+        throw new Error(
+          'Choose one transcription language for ML Kit, or select Whisper for auto-detect and multiple languages.',
+        );
+      }
+      const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
+      if (status.status !== 'available') {
+        throw new Error(
+          `${ML_KIT_TITLES[model]} is not available for ${locale}. Download or check the model in AI Models, or select Whisper.`,
+        );
+      }
+      if (options.wordTimestamps) {
+        throw new Error(
+          'ML Kit file transcription does not provide word timestamps. Select Whisper for this recording.',
+        );
+      }
+      await Promise.all([LocalWhisperService.cleanup(), LocalParakeetService.cleanup()]);
+      const startedAt = Date.now();
+      const result = await AndroidSpeech.transcribe(audioUri, mlKitMode(model), locale);
+      return {
+        text: result.text,
+        duration: (Date.now() - startedAt) / 1000,
+        provider: 'local',
+        endpoint: model,
+        processingMs: Date.now() - startedAt,
+      };
+    }
     const { languages, choice } = await this.resolveEngine(options.model);
 
     if (choice.engine === 'parakeet') {
@@ -131,7 +183,9 @@ export class LocalTranscriptionService {
    * Warm the engine the current language selection routes to (keyboard/Home pre-warm path).
    * Never downloads; a Parakeet choice that isn't installed resolves to Whisper or a no-op.
    */
-  static async prepareForLanguage(language?: string, model?: LocalModelKey): Promise<void> {
+  static async prepareForLanguage(language?: string, model?: LocalSpeechModelKey): Promise<void> {
+    // ML Kit preparation/download is an explicit action in settings, never a background download.
+    if (isMlKitModelKey(model)) return;
     const { choice } = await this.resolveEngine(model);
     if (choice.engine === 'parakeet') {
       await LocalParakeetService.prepare(choice.version);
@@ -143,13 +197,21 @@ export class LocalTranscriptionService {
   }
 
   /** True when the engine the current selection routes to has its model installed. */
-  static async isReadyForLanguage(): Promise<boolean> {
-    const { choice } = await this.resolveEngine();
+  static async isReadyForLanguage(model?: LocalSpeechModelKey): Promise<boolean> {
+    if (isMlKitModelKey(model)) {
+      const locale = configuredMlKitLocale();
+      if (Platform.OS !== 'android' || !AndroidSpeech.isAvailable() || !locale) return false;
+      const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
+      return status.status === 'available';
+    }
+    const { choice } = await this.resolveEngine(model);
     return choice.engine !== 'none';
   }
 
   /** Display descriptor for the engine the current selection *should* use (installed or not). */
-  static preferredEngineDescriptor(): LocalEngineDescriptor {
+  static preferredEngineDescriptor(model?: LocalSpeechModelKey): LocalEngineDescriptor {
+    if (isMlKitModelKey(model)) return { engine: 'mlkit', label: ML_KIT_TITLES[model] };
+    if (Platform.OS === 'android') return { engine: 'whisper', label: 'Whisper base' };
     return descriptorFor(preferredEngineForLanguages(getPreferredTranscriptionLanguages()));
   }
 
@@ -157,6 +219,7 @@ export class LocalTranscriptionService {
     await Promise.all([
       LocalWhisperService.cancelTranscription(),
       LocalParakeetService.cancelTranscription(),
+      AndroidSpeech.cancel(),
     ]);
   }
 }

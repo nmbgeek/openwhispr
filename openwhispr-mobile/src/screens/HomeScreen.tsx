@@ -1,6 +1,14 @@
 import { getTranscriptionProvider } from '@/lib/inferenceRouting';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { View, Pressable, ScrollView, ActivityIndicator, Alert, StyleSheet } from 'react-native';
+import {
+  View,
+  Pressable,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Platform,
+} from 'react-native';
 import { Text } from '@/components/ui/Text';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -47,6 +55,7 @@ import { SwipeableCard } from '@/components/ui/SwipeableCard';
 import { Glass } from '@/components/ui/Glass';
 import { SystemIcon, type LucideIconName } from '@/components/ui/SystemIcon';
 import { DictationModeControl } from '@/components/ui/DictationModeControl';
+import { AccountAvatarButton } from '@/components/ui/AccountAvatarButton';
 import { UsageLimitBanner } from '@/components/ui/UsageMeter';
 import { GradientGlassSurface } from '@/components/ui/GradientGlassSurface';
 import { Transcript } from '@/types';
@@ -161,11 +170,15 @@ export default function HomeScreen() {
     isRecording,
     isProcessing,
     isSupported,
+    currentText,
+    isLiveTranscription,
+    liveLevel,
     startRecording,
     stopRecording,
     cancelRecording,
     audioRecorder,
   } = useAudioRecording({
+    liveTranscription: true,
     onComplete: (text) => {
       Clipboard.setStringAsync(text);
       showCopied();
@@ -196,7 +209,10 @@ export default function HomeScreen() {
     onUsageLimitReached: handleUsageLimitReached,
   });
 
-  const { currentAmplitude, waveformData } = useAudioWaveform(audioRecorder, isRecording);
+  const { currentAmplitude, waveformData } = useAudioWaveform(
+    audioRecorder,
+    isRecording && !isLiveTranscription,
+  );
 
   const { isProcessing: isFileProcessing, pickAndTranscribeFile } = useFileUpload({
     onComplete: (text) => {
@@ -534,14 +550,22 @@ export default function HomeScreen() {
           ) : (
             <View />
           )}
-          <DictationModeControl onModeChange={handleDictationModeChange} />
+          {Platform.OS === 'ios' ? (
+            <DictationModeControl onModeChange={handleDictationModeChange} />
+          ) : (
+            <AccountAvatarButton />
+          )}
         </View>
-        <KeyboardFullAccessBanner />
-        <HardwareKeyboardNudgeBanner />
+        {Platform.OS === 'ios' ? (
+          <>
+            <KeyboardFullAccessBanner />
+            <HardwareKeyboardNudgeBanner />
+          </>
+        ) : null}
         {activeMode === 'cloud' ? (
           <UsageLimitBanner usage={usage} onPress={handleUsageWarningPress} />
         ) : null}
-        {isPrivateMode ? (
+        {isPrivateMode && Platform.OS === 'ios' ? (
           <View className="mt-3">
             <ParakeetNudgeBanner />
           </View>
@@ -718,8 +742,9 @@ export default function HomeScreen() {
 
       <RecordingOverlay
         visible={isRecording}
-        amplitude={currentAmplitude}
-        waveformData={waveformData}
+        amplitude={isLiveTranscription ? liveLevel : currentAmplitude}
+        waveformData={isLiveTranscription ? [] : waveformData}
+        liveTranscript={isLiveTranscription ? currentText : undefined}
         durationSeconds={recordingDuration}
         onDone={handleRecordPress}
         onDiscard={cancelRecording}

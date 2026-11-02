@@ -1,5 +1,5 @@
 import React, { useCallback, useMemo, useState } from 'react';
-import { View, FlatList, TextInput, Pressable, type ListRenderItem } from 'react-native';
+import { View, FlatList, TextInput, Pressable, Platform, type ListRenderItem } from 'react-native';
 import { Text } from '@/components/ui/Text';
 import { useHeaderHeight } from '@react-navigation/elements';
 import { router } from 'expo-router';
@@ -44,7 +44,9 @@ function LanguageRow({ language, isSelected, onPress }: LanguageRowProps) {
 export default function TranscriptionLanguageScreen() {
   const config = useConfigStore((s) => s.config);
   const updateConfig = useConfigStore((s) => s.updateConfig);
-  const selected = config?.preferredLanguage ?? DEFAULT_LANGUAGE;
+  const selected =
+    config?.preferredLanguage ??
+    (config?.languages?.length === 1 ? config.languages[0] : DEFAULT_LANGUAGE);
   const [query, setQuery] = useState('');
   const headerHeight = useHeaderHeight();
 
@@ -77,7 +79,10 @@ export default function TranscriptionLanguageScreen() {
   );
 
   return (
-    <View className="flex-1 bg-systemBackground" style={{ paddingTop: headerHeight }}>
+    <View
+      className="flex-1 bg-systemBackground"
+      style={{ paddingTop: Platform.OS === 'ios' ? headerHeight : 0 }}
+    >
       <View className="border-b border-separator px-4 py-2">
         <View
           style={{ borderCurve: 'continuous' }}

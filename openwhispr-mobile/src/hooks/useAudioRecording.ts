@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { Platform } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { AppState, Platform } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
 import { createTranscriptId, useTranscriptStore } from '../store/useTranscriptStore';
 import {
@@ -7,7 +7,7 @@ import {
   snapshotTranscriptionJob,
   type TranscriptionJobRoute,
 } from '../lib/inferenceRouting';
-import { transcribeAndCleanup } from '../lib/transcribeAndCleanup';
+import { completeRecordedTranscription, transcribeAndCleanup } from '../lib/transcribeAndCleanup';
 import { isLocalModelMissingError } from '../services/transcription/TranscriptionService';
 import { analyzeSpeechActivity, createNoSpeechError } from '../lib/speechActivity';
 import {
@@ -21,7 +21,14 @@ import { toFriendlyTranscriptionErrorMessage } from '../lib/transcriptionErrors'
 import { deleteManagedTranscriptAudio, retainTranscriptAudio } from '../lib/transcriptAudio';
 import { isUsageLimitError, type UsageLimitError } from '../lib/usageLimitError';
 import { randomUUID } from '../lib/uuid';
-import type { TranscriptionProvider } from '../types';
+import type { TranscriptionProvider, TranscriptionRequest, TranscriptionResponse } from '../types';
+import { AndroidSpeech } from '../../modules/android-speech/src';
+import {
+  isMlKitModelKey,
+  mlKitLocale,
+  mlKitMode,
+  type MlKitModelKey,
+} from '../lib/localSpeechModels';
 import {
   getExpoAudioModule,
   isExpoAudioAvailable,
@@ -30,6 +37,8 @@ import {
 import { useAudioRecorder } from 'expo-audio';
 
 export interface UseAudioRecordingOptions {
+  // Only normal dictation opts in; raw audio/meeting/voice-enrollment callers keep Expo capture.
+  liveTranscription?: boolean;
   onComplete?: (text: string) => void;
   onError?: (error: Error) => void;
   allowsBackgroundRecording?: boolean;
@@ -64,6 +73,17 @@ type RetainedRecordingAudio = {
   audioMimeType?: string;
 };
 
+type LiveRecordingSession = {
+  id: string;
+  model: MlKitModelKey;
+  locale: string;
+  phase: 'starting' | 'recording' | 'stopping';
+  cancelled: boolean;
+  retainHistory: boolean;
+  error: Error | null;
+  subscription: { remove: () => void } | null;
+};
+
 // Marks cleanup unavailable for a recording without cleanup: the job then skips the fused cloud
 // cleanup and the separate pass alike, even with the cleanup route it fills in for itself.
 const CLEANUP_OFF = 'Cleanup is off for this recording.';
@@ -82,6 +102,17 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentText, setCurrentText] = useState('');
+  const [isLiveTranscription, setIsLiveTranscription] = useState(false);
+  const [liveLevel, setLiveLevel] = useState(0);
+  const liveSessionRef = useRef<LiveRecordingSession | null>(null);
+  const startingRef = useRef(false);
+  const mountedRef = useRef(true);
+  const appActiveRef = useRef(
+    AppState.currentState !== 'background' && AppState.currentState !== 'inactive',
+  );
+  const abandonedRef = useRef(false);
+  const stopRef = useRef<() => Promise<void>>(async () => undefined);
+  const cancelRef = useRef<() => Promise<void>>(async () => undefined);
 
   // Import expo-audio module
   const expoAudio = getExpoAudioModule();
@@ -101,7 +132,36 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   const allowsBackgroundRecording = options.allowsBackgroundRecording === true;
   const saveToHistory = options.saveToHistory !== false;
   const cleanup = options.cleanup !== false;
-  const isCancelled = (): boolean => options.shouldCancel?.() === true;
+  const isCancelled = (): boolean => abandonedRef.current || options.shouldCancel?.() === true;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    const listener = AppState.addEventListener('change', (state) => {
+      appActiveRef.current = state === 'active';
+      const session = liveSessionRef.current;
+      if (
+        state !== 'active' &&
+        session &&
+        (session.phase !== 'stopping' || !session.retainHistory)
+      ) {
+        void cancelRef.current().catch(() => undefined);
+      }
+    });
+    return () => {
+      mountedRef.current = false;
+      listener.remove();
+      const session = liveSessionRef.current;
+      if (session) {
+        session.subscription?.remove();
+        // Stop commits this recording. Let its final/failed history write finish
+        // after navigation; only a capture still in progress is abandoned.
+        if (session.phase === 'stopping' && session.retainHistory) return;
+        session.cancelled = true;
+        abandonedRef.current = true;
+        void AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+      }
+    };
+  }, []);
 
   const ensureAudioSupport = () => {
     if (!isSupported || !expoAudio || !audioRecorder) {
@@ -117,8 +177,37 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   };
 
   const startRecording = async () => {
+    if (startingRef.current || openRef.current || stoppingRef.current || isProcessing) return;
+    startingRef.current = true;
+    abandonedRef.current = false;
     try {
       const { expoAudio: audioModule, audioRecorder: recorder } = ensureAudioSupport();
+      // Pin cleanup and processing choices before permission/status awaits.
+      jobRouteRef.current = cleanup
+        ? snapshotTranscriptionJob('dictation')
+        : { ...snapshotTranscriptionJob('dictation', []), cleanupUnavailable: CLEANUP_OFF };
+      let liveChoice: { model: MlKitModelKey; locale: string } | null = null;
+      if (
+        options.liveTranscription &&
+        Platform.OS === 'android' &&
+        jobRouteRef.current.provider === 'local'
+      ) {
+        const { getPickedLocalModel } =
+          require('../lib/inferenceRouting') as typeof import('../lib/inferenceRouting');
+        const { useConfigStore } =
+          require('../store/useConfigStore') as typeof import('../store/useConfigStore');
+        const model = getPickedLocalModel('dictation');
+        if (isMlKitModelKey(model)) {
+          if (!AndroidSpeech.isLiveAvailable()) {
+            throw new Error(
+              'Live ML Kit speech needs the updated Android app. Install the latest native build.',
+            );
+          }
+          const locale = mlKitLocale(useConfigStore.getState().config);
+          if (!locale) throw new Error('Choose one transcription language for live ML Kit speech.');
+          liveChoice = { model, locale };
+        }
+      }
 
       // Check status before requesting: iOS shows its system dialog only on
       // the very first-ever request for this install. If canAskAgain is
@@ -134,6 +223,56 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
           canAskAgain,
           nativePromptShown,
         });
+      }
+
+      if (liveChoice) {
+        const { model, locale } = liveChoice;
+        const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
+        if (status.status !== 'available') {
+          throw new Error(
+            'The selected ML Kit model is not ready. Download or check it in AI Models.',
+          );
+        }
+        if (!mountedRef.current || !appActiveRef.current) return;
+        const session: LiveRecordingSession = {
+          id: `live-${randomUUID()}`,
+          model,
+          locale,
+          phase: 'starting',
+          cancelled: false,
+          retainHistory: saveToHistory,
+          error: null,
+          subscription: null,
+        };
+        liveSessionRef.current = session;
+        setCurrentText('');
+        setLiveLevel(0);
+        session.subscription = AndroidSpeech.addLiveListener((event) => {
+          if (
+            !mountedRef.current ||
+            event.sessionId !== session.id ||
+            liveSessionRef.current !== session ||
+            session.cancelled
+          )
+            return;
+          if (event.type === 'transcript') setCurrentText(event.text);
+          else if (event.type === 'level') setLiveLevel(Math.max(0, Math.min(1, event.level)));
+          else {
+            session.error = Object.assign(new Error(event.message), { code: event.code });
+            if (session.phase === 'recording') void stopRef.current().catch(() => undefined);
+          }
+        });
+        await AndroidSpeech.startLive(session.id, mlKitMode(model), locale);
+        if (session.cancelled || !mountedRef.current) {
+          await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+          return;
+        }
+        session.phase = 'recording';
+        openRef.current = true;
+        setIsLiveTranscription(true);
+        setIsRecording(true);
+        if (session.error) void stopRef.current().catch(() => undefined);
+        return;
       }
 
       if (Platform.OS === 'android' && allowsBackgroundRecording) {
@@ -166,9 +305,6 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         } catch {}
       }
 
-      jobRouteRef.current = cleanup
-        ? snapshotTranscriptionJob('dictation')
-        : { ...snapshotTranscriptionJob('dictation', []), cleanupUnavailable: CLEANUP_OFF };
       await recorder.prepareToRecordAsync(recorderOptions);
       await recorder.record();
       openRef.current = true;
@@ -176,6 +312,13 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       setIsRecording(true);
       setCurrentText('');
     } catch (error) {
+      const session = liveSessionRef.current;
+      if (session?.phase === 'starting') {
+        session.subscription?.remove();
+        liveSessionRef.current = null;
+        await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+      }
+      if (abandonedRef.current || !mountedRef.current) return;
       // Permission denial is a normal user state — surfaced by onError as a
       // friendly alert. Skip console.error so dev LogBox doesn't show a red toast.
       if (!isMicPermissionError(error)) {
@@ -185,10 +328,17 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         options.onError?.(error);
       }
       throw error;
+    } finally {
+      startingRef.current = false;
     }
   };
 
   const stopRecording = async () => {
+    const liveSession = liveSessionRef.current;
+    if (liveSession) {
+      await stopLiveRecording(liveSession);
+      return;
+    }
     let sourceUriToDiscard: string | null = null;
     try {
       const { audioRecorder: recorder } = ensureAudioSupport();
@@ -355,33 +505,41 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     retained: RetainedRecordingAudio,
     provider: TranscriptionProvider,
     clientTranscriptionId: string,
+    captured?: { response: TranscriptionResponse & { provider: 'local' }; locale: string },
   ) => {
     if (isCancelled()) {
       await discardRetainedAudio(retained);
       return;
     }
-    const processedResult = await transcribeAndCleanup(
-      {
-        ...jobRouteRef.current,
-        audioUri: retained.audioUrl,
-        provider,
-        inferenceRoute: provider === 'byok' ? jobRouteRef.current.inferenceRoute : undefined,
-        cleanupRoute: jobRouteRef.current.cleanupRoute,
-        cleanupUnavailable: jobRouteRef.current.cleanupUnavailable,
-        language: getPreferredTranscriptionLanguage(),
-        fileName: retained.audioFileName,
-        mimeType: retained.audioMimeType,
-        requestContext: 'recording',
-        // Meetings end through stopRecordingRaw and never reach this upload.
-        purpose: 'dictation',
-        jobId: retained.id,
-        clientTranscriptionId,
+    const request: TranscriptionRequest = {
+      ...jobRouteRef.current,
+      audioUri: retained.audioUrl,
+      provider,
+      inferenceRoute: provider === 'byok' ? jobRouteRef.current.inferenceRoute : undefined,
+      cleanupRoute: jobRouteRef.current.cleanupRoute,
+      cleanupUnavailable: jobRouteRef.current.cleanupUnavailable,
+      language: captured?.locale ?? getPreferredTranscriptionLanguage(),
+      fileName: retained.audioFileName,
+      mimeType: retained.audioMimeType,
+      requestContext: 'recording',
+      // Meetings end through stopRecordingRaw and never reach this upload.
+      purpose: 'dictation',
+      jobId: retained.id,
+      clientTranscriptionId,
+    };
+    const lifecycle = {
+      onRawTranscript: (text: string) => {
+        if (!captured || mountedRef.current) setCurrentText(text);
       },
-      {
-        onRawTranscript: (text) => setCurrentText(text),
-        shouldCancel: isCancelled,
-      },
-    );
+      shouldCancel: isCancelled,
+    };
+    const processedResult = captured
+      ? await completeRecordedTranscription(
+          { ...request, provider: 'local' },
+          captured.response,
+          lifecycle,
+        )
+      : await transcribeAndCleanup(request, lifecycle);
 
     if (isCancelled()) {
       await discardRetainedAudio(retained);
@@ -421,10 +579,89 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       () => false,
     );
 
-    setCurrentText(finalText);
-    options.onComplete?.(finalText);
-    if (!saved) options.onError?.(new Error('Your transcript could not be saved to history.'));
+    if (!captured || mountedRef.current) {
+      setCurrentText(finalText);
+      options.onComplete?.(finalText);
+      if (!saved) options.onError?.(new Error('Your transcript could not be saved to history.'));
+    }
   };
+
+  const stopLiveRecording = async (session: LiveRecordingSession): Promise<void> => {
+    if (session.phase !== 'recording' || stoppingRef.current || session.cancelled) return;
+    session.phase = 'stopping';
+    stoppingRef.current = true;
+    setIsRecording(false);
+    setIsProcessing(true);
+    let retained: RetainedRecordingAudio | null = null;
+    let sourceUri: string | null = null;
+    let nativeStopped = false;
+    try {
+      const result = await AndroidSpeech.stopLive(session.id);
+      nativeStopped = true;
+      openRef.current = false;
+      sourceUri = result.fileUri;
+      if (session.cancelled || (!mountedRef.current && !session.retainHistory) || isCancelled())
+        return;
+      retained = await retainRecording(result.fileUri);
+      sourceUri = null;
+      if (session.error || result.error) {
+        throw (
+          session.error ??
+          Object.assign(new Error(result.error?.message ?? 'Live recognition failed.'), {
+            code: result.error?.code,
+          })
+        );
+      }
+      if (!result.text.trim()) throw createNoSpeechError();
+      await finalizeRecording(retained, 'local', `recording-${session.id}`, {
+        locale: session.locale,
+        response: {
+          text: result.text,
+          provider: 'local',
+          duration: result.durationMs / 1000,
+          endpoint: session.model,
+        },
+      });
+    } catch (error: unknown) {
+      if (session.cancelled || (!mountedRef.current && !session.retainHistory) || isCancelled()) {
+        if (retained) await discardRetainedAudio(retained);
+        return;
+      }
+      // A failed copy must not delete the original native WAV. Keep that cache
+      // file on the failed row so the user can retry after freeing storage.
+      if (!retained && sourceUri && session.retainHistory) {
+        retained = {
+          id: createTranscriptId(),
+          audioUrl: sourceUri,
+          audioFileName: fileNameFromUri(sourceUri),
+          audioMimeType: 'audio/wav',
+        };
+        sourceUri = null;
+      }
+      if (retained) {
+        if (!saveToHistory) await discardRetainedAudio(retained);
+        else await addFailedRecording(retained, 'local', error);
+      }
+      const failure = error instanceof Error ? error : new Error(String(error));
+      if (mountedRef.current) options.onError?.(failure);
+      throw failure;
+    } finally {
+      if (!nativeStopped) await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+      session.subscription?.remove();
+      if (liveSessionRef.current === session) liveSessionRef.current = null;
+      openRef.current = false;
+      stoppingRef.current = false;
+      if (sourceUri)
+        await FileSystem.deleteAsync(sourceUri, { idempotent: true }).catch(() => undefined);
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setIsProcessing(false);
+        setIsLiveTranscription(false);
+        setLiveLevel(0);
+      }
+    }
+  };
+  stopRef.current = stopRecording;
 
   // Consented cloud transcription of an already-captured private-mode recording.
   const retryWithCloud = async (
@@ -468,6 +705,24 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   // stop already claimed is left to it, file and processing state alike. The claim is held until
   // the recording is gone, so a send landing meanwhile can't stop it again and read the deleted file.
   const cancelRecording = async (): Promise<void> => {
+    const liveSession = liveSessionRef.current;
+    if (liveSession) {
+      liveSession.cancelled = true;
+      abandonedRef.current = true;
+      liveSession.subscription?.remove();
+      await AndroidSpeech.cancelLive(liveSession.id).catch(() => undefined);
+      // A claimed stop owns the returned WAV and deletes it after seeing cancellation.
+      if (liveSession.phase !== 'stopping') liveSessionRef.current = null;
+      openRef.current = false;
+      if (mountedRef.current) {
+        setIsRecording(false);
+        setIsProcessing(false);
+        setIsLiveTranscription(false);
+        setCurrentText('');
+        setLiveLevel(0);
+      }
+      return;
+    }
     if (stoppingRef.current) return;
     if (!audioRecorder || (!audioRecorder.isRecording && !openRef.current)) {
       setIsRecording(false);
@@ -495,6 +750,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       stoppingRef.current = false;
     }
   };
+  cancelRef.current = cancelRecording;
 
   // Meeting-specific: stops recording and returns the raw URI without running the dictation finalize path.
   const stopRecordingRaw = async (): Promise<string | null> => {
@@ -515,6 +771,8 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     isRecording,
     isProcessing,
     currentText,
+    isLiveTranscription,
+    liveLevel,
     isSupported,
     startRecording,
     stopRecording,

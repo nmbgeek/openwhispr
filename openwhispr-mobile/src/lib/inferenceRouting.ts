@@ -8,7 +8,7 @@ import {
   resolveMobileInferenceRoute,
 } from '@/lib/mobileProviders';
 import type { TranscriptionProvider, TranscriptionRequest, TextInferenceSnapshot } from '@/types';
-import { isLocalModelKey, type LocalModelKey } from '@/lib/localModelCatalog';
+import { isLocalSpeechModelKey, type LocalSpeechModelKey } from '@/lib/localSpeechModels';
 import { cloudAccessFor, unsetSelection, workflowSelection } from '@/lib/aiWorkflows';
 import type { CloudAccess } from '@/lib/inferenceModes';
 
@@ -19,9 +19,11 @@ export function getInferenceSelection(scope: InferenceScope): InferenceSelection
 }
 
 // The on-device model the user picked for a workflow; undefined means Automatic.
-export function getPickedLocalModel(scope: 'dictation' | 'upload'): LocalModelKey | undefined {
+export function getPickedLocalModel(
+  scope: 'dictation' | 'upload',
+): LocalSpeechModelKey | undefined {
   const selection = getInferenceSelection(scope);
-  return selection?.mode === 'local' && isLocalModelKey(selection.modelId)
+  return selection?.mode === 'local' && isLocalSpeechModelKey(selection.modelId)
     ? selection.modelId
     : undefined;
 }

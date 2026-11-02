@@ -5,10 +5,11 @@
  * transcript is kept.
  */
 import { TranscriptionService } from '@/services/transcription/TranscriptionService';
-import { transcribeAndCleanup } from '@/lib/transcribeAndCleanup';
+import { completeRecordedTranscription, transcribeAndCleanup } from '@/lib/transcribeAndCleanup';
 import { ReasoningService } from '@/services/reasoning/ReasoningService';
 import { countLocalReasoningTokens, getLocalReasoningReadiness } from '@/lib/localReasoning';
 
+let mockSnippetEntries: { trigger: string; replacement: string }[] = [];
 let mockConfig: Record<string, unknown> = {};
 let mockActiveMode = 'private';
 let mockCustomPrompt: string | undefined;
@@ -51,7 +52,7 @@ jest.mock('@/store/useProcessingModeStore', () => ({
   useProcessingModeStore: { getState: () => ({ activeMode: mockActiveMode }) },
 }));
 jest.mock('@/store/useSnippetsStore', () => ({
-  useSnippetsStore: { getState: () => ({ isLoaded: true, entries: [] }) },
+  useSnippetsStore: { getState: () => ({ isLoaded: true, entries: mockSnippetEntries }) },
 }));
 jest.mock('@/store/useDictionaryStore', () => ({
   useDictionaryStore: { getState: () => ({ isLoaded: true, entries: [] }) },
@@ -80,6 +81,7 @@ function transcribeOnDevice(
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockSnippetEntries = [];
   mockActiveMode = 'private';
   mockUser = { id: 'u', isAnonymous: false };
   mockConfig = {
@@ -401,4 +403,65 @@ it('sends a custom cleanup prompt to On-Device cleanup', async () => {
   const req = mockReason.mock.calls[0][0] as Record<string, unknown>;
   expect(req.customPrompt).toBe('Always use bullet points.');
   expect(req.inferenceRoute).toEqual({ mode: 'local', scope: 'cleanup' });
+});
+
+it('finishes a live local transcript through cleanup without transcribing its recording again', async () => {
+  const onRawTranscript = jest.fn();
+  const result = await completeRecordedTranscription(
+    {
+      audioUri: 'file:///live.wav',
+      provider: 'local',
+      requestContext: 'recording',
+      cleanupRoute: { mode: 'local', scope: 'cleanup' },
+    },
+    {
+      text: 'live words',
+      provider: 'local',
+      endpoint: 'mlkit-basic',
+      duration: 4,
+    },
+    { onRawTranscript },
+  );
+  expect(mockTranscribe).not.toHaveBeenCalled();
+  expect(TranscriptionService.transcribeWithCloudCleanup).not.toHaveBeenCalled();
+  expect(result.text).toBe('cleaned:live words');
+  expect(result.originalText).toBe('live words');
+  expect(result.transcription.endpoint).toBe('mlkit-basic');
+  expect(onRawTranscript).toHaveBeenCalledWith(
+    'live words',
+    expect.objectContaining({ provider: 'local' }),
+  );
+});
+
+it('expands snippets for captured live dictation and retains the original spoken text', async () => {
+  mockConfig = { defaultMode: 'private', cleanupEnabled: false };
+  mockSnippetEntries = [{ trigger: 'sig', replacement: 'Best regards' }];
+  const result = await completeRecordedTranscription(
+    {
+      audioUri: 'file:///live.wav',
+      provider: 'local',
+      requestContext: 'recording',
+    },
+    { text: 'sig', provider: 'local', endpoint: 'mlkit-advanced', duration: 1 },
+  );
+  expect(result.text).toBe('Best regards');
+  expect(result.originalText).toBe('sig');
+  expect(mockTranscribe).not.toHaveBeenCalled();
+  expect(mockReason).not.toHaveBeenCalled();
+});
+
+it('does not run cleanup when a live session was abandoned after recognition', async () => {
+  const result = await completeRecordedTranscription(
+    {
+      audioUri: 'file:///live.wav',
+      provider: 'local',
+      requestContext: 'recording',
+      cleanupRoute: { mode: 'local', scope: 'cleanup' },
+    },
+    { text: 'discard this', provider: 'local', duration: 1 },
+    { shouldCancel: () => true },
+  );
+  expect(result.text).toBe('discard this');
+  expect(mockReason).not.toHaveBeenCalled();
+  expect(mockTranscribe).not.toHaveBeenCalled();
 });

@@ -29,7 +29,8 @@ Expo SDK 55 · React 19 · expo-router (NativeTabs) · NativeWind · Zustand · 
 ## Platform status
 
 - **iOS** is the active release target. The keyboard extension and several native features require a development build; they do not run in Expo Go.
-- **Android** can be built locally from the checked-in source, but native Android build and release validation are not yet part of CI.
+- **Android** supports the core recording, transcription, notes, and sync app. Whisper runs on-device. Optional ML Kit Basic and Advanced speech recognition is checked against the device and selected language before use. The iOS keyboard extension, Apple Intelligence, and live meeting transcription are not Android features.
+- Mobile CI bundles both platforms and compiles an Android debug APK. Device acceptance and Play release setup are separate checks. See [Build and verify Android](./docs/android.md).
 
 ## Quick start
 

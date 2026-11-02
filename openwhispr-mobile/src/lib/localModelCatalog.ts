@@ -84,7 +84,9 @@ export function getLocalModelCatalog(
   languages: readonly string[],
   availability: LocalEngineAvailability,
 ): LocalModelCatalogEntry[] {
-  const recommended = recommendedModelKey(languages);
+  const recommended = availability.parakeetSupported
+    ? recommendedModelKey(languages)
+    : 'whisper-base';
 
   const entries: LocalModelCatalogEntry[] = [
     {
@@ -111,7 +113,7 @@ export function getLocalModelCatalog(
       key: 'whisper-base',
       engineName: 'Whisper',
       title: LOCAL_MODEL_TITLES['whisper-base'],
-      description: 'Broad language coverage — the fallback for everything Parakeet doesn’t cover.',
+      description: 'Offline speech recognition with broad language coverage.',
       languagesNote: '~99 languages incl. auto-detect',
       sizeBytes: LOCAL_MODEL_SIZE_BYTES['whisper-base'],
       recommended: recommended === 'whisper-base',

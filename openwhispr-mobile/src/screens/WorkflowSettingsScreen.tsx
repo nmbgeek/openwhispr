@@ -38,7 +38,7 @@ import {
   removeProviderCredential,
   setProviderCredential,
 } from '@/services/providers/ProviderCredentials';
-import { workflowSaveConfig } from '@/lib/inferenceModes';
+import { localSelection, workflowSaveConfig } from '@/lib/inferenceModes';
 import { InferenceModePicker } from '@/components/settings/InferenceModePicker';
 import {
   CLOUD_CLEANUP_NEEDS_ACCOUNT_NOTE,
@@ -54,7 +54,7 @@ import {
   workflowSelection,
   workflowSwitchedOff,
 } from '@/lib/aiWorkflows';
-import { isLocalModelKey } from '@/lib/localModelCatalog';
+import { isLocalSpeechModelKey } from '@/lib/localSpeechModels';
 import { getDictationAgentName } from '@/lib/dictationAgent';
 import { safeHaptics } from '@/lib/utils';
 import { SystemIcon, type LucideIconName } from '@/components/ui/SystemIcon';
@@ -366,7 +366,9 @@ function WorkflowSettings({ scope }: { scope: MobileInferenceScope }): React.JSX
       ? 'Switches to On-Device once Apple Intelligence is ready, while this page stays open.'
       : undefined) ??
     (scope === 'cleanup' && selection.mode === 'local' && onDeviceUnsupported
-      ? ON_DEVICE_CLEANUP_UNSUPPORTED_NOTE
+      ? Platform.OS === 'android'
+        ? 'On-device text cleanup is not available on Android. Choose OpenWhispr Cloud to clean up your transcripts.'
+        : ON_DEVICE_CLEANUP_UNSUPPORTED_NOTE
       : undefined) ??
     (scope === 'cleanup' &&
     selection.mode === 'openwhispr' &&
@@ -475,7 +477,8 @@ function WorkflowSettings({ scope }: { scope: MobileInferenceScope }): React.JSX
       const finishWhenReady = async (): Promise<void> => {
         let ready: boolean;
         if (speechScope) {
-          ready = (await getPrivateModeReadiness()).status === 'ready';
+          const model = localSelection(useConfigStore.getState().config, speechScope).modelId;
+          ready = (await getPrivateModeReadiness(model ?? 'automatic')).status === 'ready';
         } else {
           const readiness = await getLocalReasoningReadiness({ refresh: true });
           if (!cancelled) setAppleIntelligence(readiness);
@@ -816,7 +819,7 @@ function WorkflowSettings({ scope }: { scope: MobileInferenceScope }): React.JSX
               <OnDeviceModelSection
                 scope={speechScope}
                 picked={
-                  isLocalModelKey(savedSelection.modelId) ? savedSelection.modelId : undefined
+                  isLocalSpeechModelKey(savedSelection.modelId) ? savedSelection.modelId : undefined
                 }
                 lockedChoice={lockedByPrivateMode}
               />

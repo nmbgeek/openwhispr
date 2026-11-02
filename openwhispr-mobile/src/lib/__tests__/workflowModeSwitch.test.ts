@@ -118,7 +118,10 @@ it('opens the model list when no on-device transcription model is downloaded', a
   await expect(switchWorkflowMode('upload', 'local')).resolves.toBe('needs-model');
   // Every model is offered there, not just the one recommended for the language.
   expect(alert).not.toHaveBeenCalled();
-  expect(mockPush).toHaveBeenCalledWith('/(account)/model-download');
+  expect(mockPush).toHaveBeenCalledWith({
+    pathname: '/(account)/model-download',
+    params: { scope: 'upload' },
+  });
   expect(mockUpdateConfig).not.toHaveBeenCalled();
 });
 
@@ -377,4 +380,21 @@ describe('offering On-Device note formatting', () => {
     await flush();
     expect(offer()).toBeUndefined();
   });
+});
+
+it('does not apply an async switch after the initiating screen is no longer current', async () => {
+  let complete: ((value: unknown) => void) | undefined;
+  let current = true;
+  mockPrivateReadiness.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        complete = resolve;
+      }),
+  );
+  const pending = switchWorkflowMode('dictation', 'local', () => current);
+  current = false;
+  complete?.({ status: 'ready', modelName: 'ML Kit Basic' });
+  await expect(pending).resolves.toBe('refused');
+  expect(mockUpdateConfig).not.toHaveBeenCalled();
+  expect(mockSetActiveMode).not.toHaveBeenCalled();
 });

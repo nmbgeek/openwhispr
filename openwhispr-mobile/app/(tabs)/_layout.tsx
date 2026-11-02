@@ -37,19 +37,19 @@ export default function TabsLayout() {
     >
       <NativeTabs.Trigger name="(record)">
         <NativeTabs.Trigger.Label>Record</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="mic.fill" />
+        <NativeTabs.Trigger.Icon sf="mic.fill" md="mic" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="(notes)">
         <NativeTabs.Trigger.Label>Notes</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="note.text" />
+        <NativeTabs.Trigger.Icon sf="note.text" md="description" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="(chat)">
         <NativeTabs.Trigger.Label>Chat</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="bubble.left.and.bubble.right.fill" />
+        <NativeTabs.Trigger.Icon sf="bubble.left.and.bubble.right.fill" md="chat" />
       </NativeTabs.Trigger>
       <NativeTabs.Trigger name="(dictionary)">
         <NativeTabs.Trigger.Label>Dictionary</NativeTabs.Trigger.Label>
-        <NativeTabs.Trigger.Icon sf="text.book.closed.fill" />
+        <NativeTabs.Trigger.Icon sf="text.book.closed.fill" md="menu_book" />
       </NativeTabs.Trigger>
     </NativeTabs>
   );

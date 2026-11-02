@@ -749,14 +749,21 @@ export default function NoteEditorScreen({
     Alert.alert('Dictation failed', error.message);
   }, []);
 
-  const { isRecording, isProcessing, currentText, startRecording, stopRecording } =
-    useAudioRecording({
-      onComplete: handleDictationComplete,
-      onError: handleDictationError,
-      // A declined cloud retry keeps the recording, which the failed history row holds for a retry.
-      onLocalModelMissing: (retryWithCloud) => promptLocalModelFallback(retryWithCloud),
-      onUsageLimitReached: handleUsageLimitReached,
-    });
+  const {
+    isRecording,
+    isProcessing,
+    currentText,
+    isLiveTranscription,
+    startRecording,
+    stopRecording,
+  } = useAudioRecording({
+    liveTranscription: true,
+    onComplete: handleDictationComplete,
+    onError: handleDictationError,
+    // A declined cloud retry keeps the recording, which the failed history row holds for a retry.
+    onLocalModelMissing: (retryWithCloud) => promptLocalModelFallback(retryWithCloud),
+    onUsageLimitReached: handleUsageLimitReached,
+  });
 
   const handleDictate = useCallback(async () => {
     safeHaptics('medium');
@@ -1408,8 +1415,10 @@ export default function NoteEditorScreen({
             </View>
           ) : null}
 
-          {isRecording && currentText ? (
-            <Text className="mb-2 text-[15px] italic text-link/60">{currentText}</Text>
+          {isRecording && (currentText || isLiveTranscription) ? (
+            <Text accessibilityLiveRegion="polite" className="mb-2 text-[15px] text-link">
+              {isLiveTranscription ? `Live · ${currentText || 'Listening…'}` : currentText}
+            </Text>
           ) : null}
 
           <View className="relative">

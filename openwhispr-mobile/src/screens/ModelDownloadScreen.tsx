@@ -1,7 +1,9 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { View, ScrollView, Pressable, ActivityIndicator, Alert } from 'react-native';
+import { View, ScrollView, Pressable, ActivityIndicator, Alert, Platform } from 'react-native';
 import { Text } from '@/components/ui/Text';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
+import { AndroidSpeechModels } from '@/components/settings/AndroidSpeechModels';
+import { useConfigStore } from '@/store/useConfigStore';
 import { LocalWhisperService } from '@/services/transcription/LocalWhisperService';
 import { LocalParakeetService } from '@/services/transcription/LocalParakeetService';
 import { LocalTranscriptionService } from '@/services/transcription/LocalTranscriptionService';
@@ -21,6 +23,9 @@ function formatBytes(bytes: number): string {
 
 export default function ModelDownloadScreen() {
   const router = useRouter();
+  const { scope: requestedScope } = useLocalSearchParams<{ scope?: string }>();
+  const scope = requestedScope === 'upload' ? 'upload' : 'dictation';
+  const picked = useConfigStore((state) => state.config?.inference?.[scope]?.modelId);
   const [catalog, setCatalog] = useState<LocalModelCatalogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAvailable, setIsAvailable] = useState(false);
@@ -290,15 +295,18 @@ export default function ModelDownloadScreen() {
         </View>
       )}
 
+      <AndroidSpeechModels scope={scope} picked={picked} />
       <View
         style={{ borderCurve: 'continuous' }}
         className="mt-5 rounded-[10px] bg-secondarySystemGroupedBackground p-4"
       >
         <Text className="mb-1.5 text-sm font-semibold text-label">Which model do I need?</Text>
         <Text className="text-xs text-secondaryLabel leading-[18px]">
-          One model is enough — Local Mode picks the right engine from your dictation language.
+          {Platform.OS === 'android'
+            ? 'Whisper transcribes after you stop and supports automatic language detection. ML Kit Basic and Advanced show live text while recording. They require one selected language and a supported device; download a model here if needed. Audio stays on this device. ML Kit does not use dictionary hints.'
+            : `One model is enough. Local Mode picks the right engine from your dictation language.
           Parakeet is the fastest and most accurate for English (v2) and 25 European languages (v3).
-          Whisper base covers everything else, including auto-detect. Downloads stay on your device.
+          Whisper base covers everything else, including auto-detect. Downloads stay on your device.`}
         </Text>
         <Pressable
           onPress={() => {

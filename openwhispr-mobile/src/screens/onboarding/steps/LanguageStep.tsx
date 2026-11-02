@@ -1,6 +1,6 @@
 import { useOnboardingStep } from '@/hooks/useOnboardingStep';
 import { useCallback, useMemo, useState } from 'react';
-import { FlatList, Modal, Pressable, TextInput, View } from 'react-native';
+import { FlatList, Modal, Platform, Pressable, TextInput, View } from 'react-native';
 import { Text } from '@/components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { OnboardingShell } from '@/components/onboarding/OnboardingShell';
@@ -158,9 +158,10 @@ export function LanguageStep() {
     await goNext();
   }, [selected, goNext]);
 
-  const subtitle = detectedCodes.length
-    ? 'We picked these from your keyboard. Add or remove based on your preference.'
-    : 'Pick the languages you want OpenWhispr to recognize.';
+  const subtitle =
+    Platform.OS === 'ios' && detectedCodes.length
+      ? 'We picked these from your keyboard. Add or remove based on your preference.'
+      : 'Pick the languages you want OpenWhispr to recognize.';
 
   return (
     <>

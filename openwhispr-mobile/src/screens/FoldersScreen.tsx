@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
-import { View, ScrollView, Alert, ActionSheetIOS, RefreshControl } from 'react-native';
+import { View, ScrollView, Alert, RefreshControl, Platform } from 'react-native';
 import { Text } from '@/components/ui/Text';
 
 const SCROLL_PADDING = 16;
@@ -13,6 +13,7 @@ import { NoteRow } from '@/components/notes/NoteRow';
 import type { RestoreRow } from '@/components/ui/SwipeableCard';
 import { SectionHeader } from '@/components/notes/SectionHeader';
 import { NewFolderSheet } from '@/components/notes/NewFolderSheet';
+import { showFolderActions } from '@/components/notes/folderActions';
 import { SpacesSection } from '@/components/notes/SpacesSection';
 import { SystemIcon } from '@/components/ui/SystemIcon';
 import { groupNotesByDate } from '@/lib/groupNotesByDate';
@@ -46,6 +47,7 @@ export default function FoldersScreen() {
   } = useNotesStore();
   const [searchValue, setSearchValue] = useState('');
   const [newFolderVisible, setNewFolderVisible] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
 
   const trimmedQuery = searchValue.trim();
   const isSearching = trimmedQuery.length > 0;
@@ -136,30 +138,29 @@ export default function FoldersScreen() {
         return;
       }
       safeHaptics('medium');
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options: ['Rename', 'Delete', 'Cancel'],
-          destructiveButtonIndex: 1,
-          cancelButtonIndex: 2,
-        },
-        (index) => {
-          if (index === 0) {
-            Alert.prompt('Rename Folder', '', (text) => {
-              const trimmed = text?.trim();
-              if (trimmed) renameFolder(folderId, trimmed);
-            });
-          } else if (index === 1) {
-            const noteCount = folderCounts[folderId] ?? 0;
-            confirmDestructive(
-              'Delete Folder',
-              noteCount > 0
-                ? `"${folderName}" and its ${noteCount} ${noteCount === 1 ? 'note' : 'notes'} will be deleted.`
-                : `"${folderName}" will be deleted.`,
-              () => deleteFolderSafe(folderId),
-            );
+      showFolderActions({
+        canDelete: true,
+        onRename: () => {
+          if (Platform.OS !== 'ios') {
+            setRenameTarget({ id: folderId, name: folderName });
+            return;
           }
+          Alert.prompt('Rename Folder', '', (text) => {
+            const trimmed = text?.trim();
+            if (trimmed) renameFolder(folderId, trimmed);
+          });
         },
-      );
+        onDelete: () => {
+          const noteCount = folderCounts[folderId] ?? 0;
+          confirmDestructive(
+            'Delete Folder',
+            noteCount > 0
+              ? `"${folderName}" and its ${noteCount} ${noteCount === 1 ? 'note' : 'notes'} will be deleted.`
+              : `"${folderName}" will be deleted.`,
+            () => deleteFolderSafe(folderId),
+          );
+        },
+      });
     },
     [renameFolder, deleteFolderSafe, folderCounts],
   );
@@ -259,8 +260,23 @@ export default function FoldersScreen() {
         icon="plus"
         mdIcon="Plus"
         accessibilityLabel="Create"
-        actions={FAB_ACTIONS}
+        actions={
+          Platform.OS === 'ios'
+            ? FAB_ACTIONS
+            : FAB_ACTIONS.filter((action) => action.id !== 'meeting')
+        }
         onActionPress={handleFabAction}
+      />
+
+      <NewFolderSheet
+        visible={renameTarget !== null}
+        title="Rename Folder"
+        submitLabel="Save"
+        initialName={renameTarget?.name}
+        onClose={() => setRenameTarget(null)}
+        onCreate={(name) => {
+          if (renameTarget) renameFolder(renameTarget.id, name);
+        }}
       />
 
       <NewFolderSheet

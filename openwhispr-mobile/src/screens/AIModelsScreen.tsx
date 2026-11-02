@@ -34,6 +34,7 @@ const WORKFLOW_ICONS: Record<MobileInferenceScope, { icon: string; mdIcon: Lucid
 };
 
 function localReasoningStatusLabel(readiness: LocalReasoningReadiness | null): string {
+  if (Platform.OS === 'android') return 'Not available on Android';
   switch (readiness?.status) {
     case 'ready':
       return 'Ready';
@@ -159,7 +160,7 @@ export default function AIModelsScreen(): React.JSX.Element {
     <View className="flex-1 bg-systemBackground">
       <SettingsScreen>
         <SettingsSection title="Workflows">
-          {WORKFLOWS.map((scope) => (
+          {WORKFLOWS.filter((scope) => Platform.OS === 'ios' || scope !== 'agent').map((scope) => (
             <SettingsRow
               key={scope}
               iconStyle="line"
@@ -177,26 +178,42 @@ export default function AIModelsScreen(): React.JSX.Element {
         <SettingsSection title="On-Device">
           <SettingsRow
             iconStyle="line"
-            icon="sparkles"
-            mdIcon="Sparkles"
-            title="Local Apple Intelligence"
-            description={`Status: ${localReasoningStatusLabel(localReadiness)}\nRuns On-Device text workflows, and private and signed-out note generation.`}
-            rightElement={
-              <SettingsSwitch
-                value={localIntelligenceEnabled}
-                onValueChange={handleToggleLocalIntelligence}
-              />
+            icon="waveform"
+            mdIcon="AudioLines"
+            title="Speech Models"
+            description={
+              Platform.OS === 'android'
+                ? 'Download Whisper or check optional ML Kit Basic and Advanced support.'
+                : 'Download models for offline transcription.'
             }
-            showChevron={false}
+            onPress={() => router.push('/(account)/model-download')}
           />
-          <SettingsRow
-            iconStyle="line"
-            icon="person.2"
-            mdIcon="Users"
-            title="Speaker Separation"
-            description="Required for meeting transcription."
-            onPress={() => router.push('/(account)/diarization-model')}
-          />
+          {Platform.OS === 'ios' ? (
+            <>
+              <SettingsRow
+                iconStyle="line"
+                icon="sparkles"
+                mdIcon="Sparkles"
+                title="Local Apple Intelligence"
+                description={`Status: ${localReasoningStatusLabel(localReadiness)}\nRuns On-Device text workflows, and private and signed-out note generation.`}
+                rightElement={
+                  <SettingsSwitch
+                    value={localIntelligenceEnabled}
+                    onValueChange={handleToggleLocalIntelligence}
+                  />
+                }
+                showChevron={false}
+              />
+              <SettingsRow
+                iconStyle="line"
+                icon="person.2"
+                mdIcon="Users"
+                title="Speaker Separation"
+                description="Required for meeting transcription."
+                onPress={() => router.push('/(account)/diarization-model')}
+              />
+            </>
+          ) : null}
         </SettingsSection>
         {Platform.OS === 'ios' ? (
           <SettingsSection>

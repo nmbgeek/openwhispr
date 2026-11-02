@@ -16,10 +16,12 @@ import {
   type LocalEngineAvailability,
 } from '@/services/transcription/localEngine';
 import { useModelDownloadStore } from '@/store/useModelDownloadStore';
+import { AndroidSpeechModels } from './AndroidSpeechModels';
+import { isMlKitModelKey, type LocalSpeechModelKey } from '@/lib/localSpeechModels';
 
 type Props = {
   scope: 'dictation' | 'upload';
-  picked: LocalModelKey | undefined;
+  picked: LocalSpeechModelKey | undefined;
   // The workflow is saved to a mode Private mode locks and shown as Automatic, so tapping
   // Automatic must not replace that choice; picking a model still does.
   lockedChoice?: boolean;
@@ -77,57 +79,62 @@ export function OnDeviceModelSection({
     !!catalog.find((entry) => entry.key === key)?.downloaded &&
     localModelCoversLanguages(key, languages);
   // A pick that is deleted or misses a language runs as Automatic, so show it that way.
-  const effectivePick = picked && usable(picked) ? picked : undefined;
+  const effectivePick = picked && (isMlKitModelKey(picked) || usable(picked)) ? picked : undefined;
 
   return (
-    <SettingsSection title="On-Device Model">
-      <SettingsRow
-        {...radio(!effectivePick)}
-        iconStyle="line"
-        title="Automatic"
-        description={`Best downloaded model for your languages. ${modelInUse(languages, availability)}`}
-        selected={!effectivePick}
-        showChevron={false}
-        onPress={lockedChoice ? undefined : () => pickLocalModel(scope, undefined)}
-      />
-      {catalog.map((entry) =>
-        entry.downloaded ? (
-          <SettingsRow
-            key={entry.key}
-            {...radio(effectivePick === entry.key)}
-            iconStyle="line"
-            title={entry.title}
-            description={
-              usable(entry.key)
-                ? entry.languagesNote
-                : `${entry.languagesNote} · Doesn't cover your languages`
-            }
-            descriptionAccessory={<ModelLanguagesButton model={entry.key} />}
-            selected={effectivePick === entry.key}
-            showChevron={false}
-            onPress={usable(entry.key) ? () => pickLocalModel(scope, entry.key) : undefined}
-          />
-        ) : (
-          <SettingsRow
-            key={entry.key}
-            icon="arrow.down.circle"
-            mdIcon="Download"
-            iconStyle="line"
-            title={entry.title}
-            description={entry.languagesNote}
-            descriptionAccessory={<ModelLanguagesButton model={entry.key} />}
-            subtitle="Download"
-            onPress={() => router.push('/(account)/model-download')}
-          />
-        ),
-      )}
-      <SettingsRow
-        icon="externaldrive"
-        mdIcon="HardDrive"
-        iconStyle="line"
-        title="Manage downloads"
-        onPress={() => router.push('/(account)/model-download')}
-      />
-    </SettingsSection>
+    <>
+      <SettingsSection title="On-Device Model">
+        <SettingsRow
+          {...radio(!effectivePick)}
+          iconStyle="line"
+          title="Automatic"
+          description={`Best downloaded model for your languages. ${modelInUse(languages, availability)}`}
+          selected={!effectivePick}
+          showChevron={false}
+          onPress={lockedChoice ? undefined : () => pickLocalModel(scope, undefined)}
+        />
+        {catalog.map((entry) =>
+          entry.downloaded ? (
+            <SettingsRow
+              key={entry.key}
+              {...radio(effectivePick === entry.key)}
+              iconStyle="line"
+              title={entry.title}
+              description={
+                usable(entry.key)
+                  ? entry.languagesNote
+                  : `${entry.languagesNote} · Doesn't cover your languages`
+              }
+              descriptionAccessory={<ModelLanguagesButton model={entry.key} />}
+              selected={effectivePick === entry.key}
+              showChevron={false}
+              onPress={usable(entry.key) ? () => pickLocalModel(scope, entry.key) : undefined}
+            />
+          ) : (
+            <SettingsRow
+              key={entry.key}
+              icon="arrow.down.circle"
+              mdIcon="Download"
+              iconStyle="line"
+              title={entry.title}
+              description={entry.languagesNote}
+              descriptionAccessory={<ModelLanguagesButton model={entry.key} />}
+              subtitle="Download"
+              onPress={() =>
+                router.push({ pathname: '/(account)/model-download', params: { scope } })
+              }
+            />
+          ),
+        )}
+        <SettingsRow
+          icon="externaldrive"
+          mdIcon="HardDrive"
+          iconStyle="line"
+          title="Manage downloads"
+          onPress={() => router.push({ pathname: '/(account)/model-download', params: { scope } })}
+        />
+      </SettingsSection>
+      <AndroidSpeechModels scope={scope} picked={picked} />
+    </>
   );
 }

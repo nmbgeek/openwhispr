@@ -1,6 +1,6 @@
 import { useOnboardingStep } from '@/hooks/useOnboardingStep';
 import { useEffect } from 'react';
-import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { OnboardingShell } from '@/components/onboarding/OnboardingShell';
 import { AnimatedKeyboardPreview } from '@/components/onboarding/AnimatedKeyboardPreview';
 import { SystemIcon } from '@/components/ui/SystemIcon';
@@ -56,12 +56,22 @@ export function WelcomeStep() {
     <OnboardingShell
       title="Security-first speech to text"
       titleAccent="Security-first"
-      subtitle="Dictate naturally anywhere on iPhone. Emails, messages, notes and AI chats."
+      subtitle={
+        Platform.OS === 'ios'
+          ? 'Dictate naturally anywhere on iPhone. Emails, messages, notes and AI chats.'
+          : 'Record your voice, transcribe audio and keep your notes together. Choose on-device or cloud processing.'
+      }
       ctaLabel="Set up"
       onCta={goNext}
     >
       <View className="flex-1 justify-center gap-5">
-        <WelcomeIntroVideo />
+        {Platform.OS === 'ios' ? (
+          <WelcomeIntroVideo />
+        ) : (
+          <View className="items-center py-10">
+            <SystemIcon name="mic.fill" mdName="Mic" size={72} color="brand" />
+          </View>
+        )}
         <View className="gap-2">
           {TRUST_POINTS.map((point) => (
             <View key={point} className="flex-row items-center gap-2">

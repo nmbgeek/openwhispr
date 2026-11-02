@@ -40,7 +40,15 @@
       },
       "predictiveBackGestureEnabled": false,
       "package": "com.gizmolabs.openwhispr",
-      "permissions": ["android.permission.RECORD_AUDIO", "android.permission.MODIFY_AUDIO_SETTINGS"]
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ],
+      "splash": {
+        "image": "./assets/splash-icon.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#007AFF"
+      }
     },
     "web": {
       "bundler": "metro",
@@ -53,6 +61,10 @@
         {
           "ios": {
             "deploymentTarget": "17.0"
+          },
+          "android": {
+            "minSdkVersion": 26,
+            "kotlinVersion": "2.3.0"
           }
         }
       ],
@@ -102,7 +114,8 @@
           "userTrackingPermission": "Allow tracking to help us measure which ads lead to OpenWhispr installs and subscriptions. Your voice and text are never used for advertising."
         }
       ],
-      "react-native-appsflyer"
+      "react-native-appsflyer",
+      "./plugins/android-build/withAndroidBuild"
     ],
     "experiments": {
       "reactCompiler": true

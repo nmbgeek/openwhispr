@@ -1,6 +1,8 @@
 import { initWhisper, type WhisperContext } from 'whisper.rn';
 import * as FileSystem from 'expo-file-system/legacy';
 import { TranscriptionResponse } from '../../types';
+import { Platform } from 'react-native';
+import { AndroidSpeech } from '../../../modules/android-speech/src';
 
 export interface LocalModelInfo {
   name: string;
@@ -132,7 +134,7 @@ export class LocalWhisperService {
 
     if (!this.isAvailable()) {
       throw new Error(
-        'Local Whisper is not available. Build the app with `npx expo run:ios` to enable local transcription.',
+        'Local Whisper is not available. Use a native Android or iOS development build to enable local transcription.',
       );
     }
 
@@ -166,25 +168,34 @@ export class LocalWhisperService {
 
       const startTime = Date.now();
 
-      const { promise } = this.whisperContext.transcribe(audioUri, {
-        language: opts.language,
-        maxThreads: this.maxThreads,
-        maxLen: opts.wordTimestamps ? 1 : 0,
-        tokenTimestamps: opts.wordTimestamps,
-        translate: false,
-        ...(opts.prompt ? { prompt: opts.prompt } : {}),
-      });
-      const result = await promise;
+      // whisper.rn accepts PCM WAV, while Android's recorder and imported files commonly use
+      // M4A/MP3. Decode on-device and remove only the new temporary copy after inference.
+      const convertedUri =
+        Platform.OS === 'android' ? await AndroidSpeech.convertToWav(audioUri) : null;
+      try {
+        const { promise } = this.whisperContext.transcribe(convertedUri ?? audioUri, {
+          language: opts.language,
+          maxThreads: this.maxThreads,
+          maxLen: opts.wordTimestamps ? 1 : 0,
+          tokenTimestamps: opts.wordTimestamps,
+          translate: false,
+          ...(opts.prompt ? { prompt: opts.prompt } : {}),
+        });
+        const result = await promise;
 
-      const duration = (Date.now() - startTime) / 1000;
+        const duration = (Date.now() - startTime) / 1000;
 
-      return {
-        text: result.result.trim(),
-        duration,
-        provider: 'local',
-        processingMs: Date.now() - startTime,
-        ...(opts.wordTimestamps ? { segments: result.segments } : {}),
-      };
+        return {
+          text: result.result.trim(),
+          duration,
+          provider: 'local',
+          processingMs: Date.now() - startTime,
+          ...(opts.wordTimestamps ? { segments: result.segments } : {}),
+        };
+      } finally {
+        if (convertedUri)
+          await FileSystem.deleteAsync(convertedUri, { idempotent: true }).catch(() => undefined);
+      }
     });
   }
 
@@ -227,7 +238,7 @@ export class LocalWhisperService {
   ): Promise<void> {
     if (!this.isAvailable()) {
       throw new Error(
-        'Local Whisper is not available. Build the app with `npx expo run:ios` to enable it.',
+        'Local Whisper is not available. Use a native Android or iOS development build to enable it.',
       );
     }
 

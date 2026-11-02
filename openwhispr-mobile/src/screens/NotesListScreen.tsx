@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useMemo, useState } from 'react';
-import { View, ScrollView, Pressable, RefreshControl, Alert, ActionSheetIOS } from 'react-native';
+import { View, ScrollView, Pressable, RefreshControl, Alert, Platform } from 'react-native';
 import { Text } from '@/components/ui/Text';
 
 const SCROLL_PADDING = 16;
@@ -13,6 +13,7 @@ import type { RestoreRow } from '@/components/ui/SwipeableCard';
 import { SectionHeader } from '@/components/notes/SectionHeader';
 import { MoveToFolderSheet } from '@/components/notes/MoveToFolderSheet';
 import { NewFolderSheet } from '@/components/notes/NewFolderSheet';
+import { showFolderActions } from '@/components/notes/folderActions';
 import { SystemIcon } from '@/components/ui/SystemIcon';
 import { Fab, FAB_BOTTOM_PADDING, type FabAction } from '@/components/ui/Fab';
 import { groupNotesByDate } from '@/lib/groupNotesByDate';
@@ -51,6 +52,7 @@ export default function NotesListScreen() {
   } = useNotesStore();
 
   const [newFolderVisible, setNewFolderVisible] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<{ id: number; name: string } | null>(null);
 
   useEffect(() => {
     if (!isInitialized) initialize();
@@ -160,8 +162,10 @@ export default function NotesListScreen() {
   const fabActions = useMemo<FabAction[]>(() => {
     const actions: FabAction[] = [
       { id: 'note', label: 'New note', icon: 'square.and.pencil', mdIcon: 'SquarePen' },
-      { id: 'meeting', label: 'Record meeting', icon: 'mic', mdIcon: 'Mic' },
     ];
+    if (Platform.OS === 'ios') {
+      actions.push({ id: 'meeting', label: 'Record meeting', icon: 'mic', mdIcon: 'Mic' });
+    }
     if (spaceId != null) {
       actions.push({
         id: 'folder',
@@ -183,31 +187,29 @@ export default function NotesListScreen() {
       safeHaptics('medium');
       // The server refuses to delete a default folder outright, so never offer it.
       const canDelete = canDeleteSpaceFolders && !isDefault;
-      const options = canDelete ? ['Rename', 'Delete', 'Cancel'] : ['Rename', 'Cancel'];
-      ActionSheetIOS.showActionSheetWithOptions(
-        {
-          options,
-          destructiveButtonIndex: canDelete ? 1 : undefined,
-          cancelButtonIndex: options.length - 1,
-        },
-        (index) => {
-          if (index === 0) {
-            Alert.prompt('Rename Folder', '', (text) => {
-              const trimmed = text?.trim();
-              if (trimmed) renameFolder(targetFolderId, trimmed);
-            });
-          } else if (canDelete && index === 1) {
-            const noteCount = folderCounts[targetFolderId] ?? 0;
-            confirmDestructive(
-              'Delete Folder',
-              noteCount > 0
-                ? `"${folderName}" and its ${noteCount} ${noteCount === 1 ? 'note' : 'notes'} will be deleted for everyone in this space.`
-                : `"${folderName}" will be deleted for everyone in this space.`,
-              () => deleteFolderSafe(targetFolderId),
-            );
+      showFolderActions({
+        canDelete: canDelete,
+        onRename: () => {
+          if (Platform.OS !== 'ios') {
+            setRenameTarget({ id: targetFolderId, name: folderName });
+            return;
           }
+          Alert.prompt('Rename Folder', '', (text) => {
+            const trimmed = text?.trim();
+            if (trimmed) renameFolder(targetFolderId, trimmed);
+          });
         },
-      );
+        onDelete: () => {
+          const noteCount = folderCounts[targetFolderId] ?? 0;
+          confirmDestructive(
+            'Delete Folder',
+            noteCount > 0
+              ? `"${folderName}" and its ${noteCount} ${noteCount === 1 ? 'note' : 'notes'} will be deleted for everyone in this space.`
+              : `"${folderName}" will be deleted for everyone in this space.`,
+            () => deleteFolderSafe(targetFolderId),
+          );
+        },
+      });
     },
     [canDeleteSpaceFolders, renameFolder, deleteFolderSafe, folderCounts],
   );
@@ -255,35 +257,37 @@ export default function NotesListScreen() {
         <Text className="mb-2 text-[15px] text-tertiaryLabel">{`${totalCount} ${totalCount === 1 ? 'Note' : 'Notes'}`}</Text>
         <SyncStatusLabel />
 
-        <View className="mb-2">
-          <GroupedList>
-            <GroupedList.Row
-              leadingIconSlot={
-                <SystemIcon name="waveform" mdName="AudioLines" size={22} color="brand" />
-              }
-              onPress={openVoiceProfiles}
-              accessibilityRole="button"
-              accessibilityLabel="Voice Profiles"
-            >
-              <View className="flex-row items-center justify-between gap-3">
-                <View className="min-w-0 flex-1">
-                  <Text className="text-[16px] font-medium text-label">Voice Profiles</Text>
-                  <Text className="mt-0.5 text-[13px] text-secondaryLabel">
-                    {voiceProfiles.length === 0
-                      ? 'Teach OpenWhispr your voice'
-                      : `${voiceProfiles.length} ${voiceProfiles.length === 1 ? 'voice' : 'voices'}`}
-                  </Text>
+        {Platform.OS === 'ios' ? (
+          <View className="mb-2">
+            <GroupedList>
+              <GroupedList.Row
+                leadingIconSlot={
+                  <SystemIcon name="waveform" mdName="AudioLines" size={22} color="brand" />
+                }
+                onPress={openVoiceProfiles}
+                accessibilityRole="button"
+                accessibilityLabel="Voice Profiles"
+              >
+                <View className="flex-row items-center justify-between gap-3">
+                  <View className="min-w-0 flex-1">
+                    <Text className="text-[16px] font-medium text-label">Voice Profiles</Text>
+                    <Text className="mt-0.5 text-[13px] text-secondaryLabel">
+                      {voiceProfiles.length === 0
+                        ? 'Teach OpenWhispr your voice'
+                        : `${voiceProfiles.length} ${voiceProfiles.length === 1 ? 'voice' : 'voices'}`}
+                    </Text>
+                  </View>
+                  <SystemIcon
+                    name="chevron.right"
+                    mdName="ChevronRight"
+                    size={13}
+                    color="tertiaryLabel"
+                  />
                 </View>
-                <SystemIcon
-                  name="chevron.right"
-                  mdName="ChevronRight"
-                  size={13}
-                  color="tertiaryLabel"
-                />
-              </View>
-            </GroupedList.Row>
-          </GroupedList>
-        </View>
+              </GroupedList.Row>
+            </GroupedList>
+          </View>
+        ) : null}
 
         {showSpaceFolders && (
           <View className="mb-2">
@@ -383,6 +387,17 @@ export default function NotesListScreen() {
         accessibilityLabel="Create"
         actions={fabActions}
         onActionPress={handleFabAction}
+      />
+
+      <NewFolderSheet
+        visible={renameTarget !== null}
+        title="Rename Folder"
+        submitLabel="Save"
+        initialName={renameTarget?.name}
+        onClose={() => setRenameTarget(null)}
+        onCreate={(name) => {
+          if (renameTarget) renameFolder(renameTarget.id, name);
+        }}
       />
 
       <NewFolderSheet

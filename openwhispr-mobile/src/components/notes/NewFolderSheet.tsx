@@ -1,5 +1,6 @@
+import { iosColor } from '@/config/colors';
 import { useEffect, useRef, useState } from 'react';
-import { PlatformColor, TextInput } from 'react-native';
+import { TextInput } from 'react-native';
 import { FormSheet } from '@/components/ui/FormSheet';
 import { AppFont } from '@/lib/fonts';
 import { safeHaptics } from '@/lib/utils';
@@ -9,19 +10,29 @@ type NewFolderSheetProps = {
   visible: boolean;
   onClose: () => void;
   onCreate: (name: string) => void;
+  initialName?: string;
+  title?: string;
+  submitLabel?: string;
 };
 
-export function NewFolderSheet({ visible, onClose, onCreate }: NewFolderSheetProps) {
+export function NewFolderSheet({
+  visible,
+  onClose,
+  onCreate,
+  initialName = '',
+  title = 'New Folder',
+  submitLabel = 'Create Folder',
+}: NewFolderSheetProps) {
   const inputRef = useRef<TextInput>(null);
   const [name, setName] = useState('');
 
   useEffect(() => {
     if (!visible) return;
-    setName('');
+    setName(initialName);
     // Slight delay so the sheet's slide-in finishes before the keyboard rises.
     const t = setTimeout(() => inputRef.current?.focus(), 220);
     return () => clearTimeout(t);
-  }, [visible]);
+  }, [visible, initialName]);
 
   const trimmed = name.trim();
   const canCreate = trimmed.length > 0;
@@ -37,8 +48,8 @@ export function NewFolderSheet({ visible, onClose, onCreate }: NewFolderSheetPro
     <FormSheet
       visible={visible}
       onClose={onClose}
-      title="New Folder"
-      submitLabel="Create Folder"
+      title={title}
+      submitLabel={submitLabel}
       canSubmit={canCreate}
       onSubmit={handleCreate}
     >
@@ -47,13 +58,13 @@ export function NewFolderSheet({ visible, onClose, onCreate }: NewFolderSheetPro
         value={name}
         onChangeText={setName}
         placeholder="Folder name"
-        placeholderTextColor={PlatformColor('tertiaryLabel') as unknown as string}
+        placeholderTextColor={iosColor('tertiaryLabel')}
         returnKeyType="done"
         onSubmitEditing={handleCreate}
         autoCapitalize="sentences"
         className="h-12 px-3 text-[17px] text-label"
         style={{
-          backgroundColor: PlatformColor('tertiarySystemFill') as unknown as string,
+          backgroundColor: iosColor('tertiarySystemFill'),
           borderRadius: NOTES_BUTTON_RADIUS,
           borderCurve: 'continuous',
           fontFamily: AppFont.regular,

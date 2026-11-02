@@ -1,3 +1,4 @@
+jest.mock('@/components/settings/AndroidSpeechModels', () => ({ AndroidSpeechModels: () => null }));
 import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
@@ -92,7 +93,10 @@ it('shows the picked model as selected and can go back to Automatic', async () =
 it('sends a model that is not downloaded to the download screen', async () => {
   render(<OnDeviceModelSection scope="dictation" picked={undefined} />);
   fireEvent.press(await screen.findByText('Whisper base'));
-  expect(mockPush).toHaveBeenCalledWith('/(account)/model-download');
+  expect(mockPush).toHaveBeenCalledWith({
+    pathname: '/(account)/model-download',
+    params: { scope: 'dictation' },
+  });
   expect(mockPickLocalModel).not.toHaveBeenCalled();
 });
 

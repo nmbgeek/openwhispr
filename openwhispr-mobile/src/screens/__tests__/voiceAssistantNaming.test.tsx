@@ -1,3 +1,6 @@
+jest.mock('@/components/settings/AndroidSystemSettings', () => ({
+  AndroidSystemSettings: () => null,
+}));
 import React from 'react';
 import { render, screen } from '@testing-library/react-native';
 

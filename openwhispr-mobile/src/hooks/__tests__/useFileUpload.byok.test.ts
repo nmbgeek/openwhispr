@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+import { isOggOpus } from '../../services/transcription/TranscriptionService';
 import { act, renderHook } from '@testing-library/react-native';
 
 const mockGetDocumentAsync = jest.fn();
@@ -18,7 +20,7 @@ jest.mock('../../../modules/audio-tools/src', () => ({
   AudioTools: { isAvailable: () => false, cleanup: jest.fn(async () => undefined) },
 }));
 jest.mock('../../services/transcription/TranscriptionService', () => ({
-  isOggOpus: () => false,
+  isOggOpus: jest.fn(() => false),
   isLocalModelMissingError: () => false,
 }));
 jest.mock('../../store/useTranscriptStore', () => ({
@@ -78,6 +80,7 @@ async function upload(): Promise<{ error?: Error; onError: jest.Mock }> {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(isOggOpus).mockReturnValue(false);
   mockSnapshotTranscriptionJob.mockReturnValue(byokRoute);
   mockGetInfoAsync.mockResolvedValue({ exists: true, size: 1 * MB });
   mockRetainTranscriptAudio.mockResolvedValue('file://docs/transcript-audio/upload-1.m4a');
@@ -131,4 +134,22 @@ describe('provider uploads that the provider would reject', () => {
       expect.anything(),
     );
   });
+});
+
+it('lets Android local Opus reach the native decoder without requiring Cloud', async () => {
+  const prior = Platform.OS;
+  Platform.OS = 'android';
+  try {
+    mockSnapshotTranscriptionJob.mockReturnValue({ provider: 'local' });
+    jest.mocked(isOggOpus).mockReturnValue(true);
+    pick({ name: 'voice.opus', mimeType: 'audio/ogg', size: MB });
+    const { error } = await upload();
+    expect(error).toBeUndefined();
+    expect(mockTranscribeAndCleanup).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'local' }),
+      expect.anything(),
+    );
+  } finally {
+    Platform.OS = prior;
+  }
 });

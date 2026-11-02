@@ -1,0 +1,25 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.androidspeech'
+version = '1.0.0'
+
+android {
+  namespace 'expo.modules.androidspeech'
+  defaultConfig {
+    minSdkVersion 26
+    versionCode 1
+    versionName '1.0.0'
+    testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+  }
+}
+
+dependencies {
+  // alpha2 is required for AudioSource.fromUri / whole-file ONE_SHOT recognition.
+  implementation 'com.google.mlkit:genai-speech-recognition:1.0.0-alpha2'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2'
+  androidTestImplementation 'androidx.test:runner:1.6.2'
+  androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+}

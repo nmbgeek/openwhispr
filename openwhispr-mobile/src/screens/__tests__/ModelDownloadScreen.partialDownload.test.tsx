@@ -1,7 +1,9 @@
+jest.mock('@/components/settings/AndroidSpeechModels', () => ({ AndroidSpeechModels: () => null }));
 import React from 'react';
 import { act, fireEventAsync, renderAsync, screen } from '@testing-library/react-native';
 
 jest.mock('expo-router', () => ({
+  useLocalSearchParams: () => ({}),
   useRouter: () => ({ canGoBack: () => true, back: jest.fn(), replace: jest.fn() }),
 }));
 // nativewind's cssInterop breaks jest's transform; same stub the other screen suites use.
@@ -21,7 +23,10 @@ jest.mock('expo-file-system/legacy', () => ({
   getFreeDiskStorageAsync: jest.fn(async () => 64 * 1024 * 1024 * 1024),
 }));
 jest.mock('@/store/useConfigStore', () => ({
-  useConfigStore: { getState: () => ({ updateConfig: jest.fn(async () => undefined) }) },
+  useConfigStore: Object.assign(
+    (selector: (state: unknown) => unknown) => selector({ config: null }),
+    { getState: () => ({ updateConfig: jest.fn(async () => undefined) }) },
+  ),
 }));
 jest.mock('@/services/transcription/LocalWhisperService', () => ({
   LocalWhisperService: {

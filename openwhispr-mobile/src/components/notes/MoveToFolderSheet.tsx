@@ -1,4 +1,6 @@
-import { Modal, View, ScrollView, Alert } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Modal, View, ScrollView, Alert, Platform } from 'react-native';
+import { NewFolderSheet } from './NewFolderSheet';
 import { Text } from '@/components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GroupedList } from './GroupedList';
@@ -44,10 +46,18 @@ export function MoveToFolderSheet({
   onPickSpace,
 }: MoveToFolderSheetProps) {
   const insets = useSafeAreaInsets();
+  const [creatingFolder, setCreatingFolder] = useState(false);
+  useEffect(() => {
+    if (!visible) setCreatingFolder(false);
+  }, [visible]);
   const targets = folders.filter((f) => f.id !== excludeFolderId && !f.deletedAt);
   const title = activeSpaceId == null ? 'Move to Folder' : 'Move Note';
 
   const handleCreate = () => {
+    if (Platform.OS !== 'ios') {
+      setCreatingFolder(true);
+      return;
+    }
     Alert.prompt('New Folder', 'Enter a name for the new folder', (text) => {
       const trimmed = text?.trim();
       if (trimmed) {
@@ -138,6 +148,13 @@ export function MoveToFolderSheet({
           )}
         </ScrollView>
       </View>
+      {Platform.OS !== 'ios' ? (
+        <NewFolderSheet
+          visible={visible && creatingFolder}
+          onClose={() => setCreatingFolder(false)}
+          onCreate={onCreateAndPick}
+        />
+      ) : null}
     </Modal>
   );
 }

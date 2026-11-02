@@ -1,4 +1,5 @@
 import { fireEvent, render } from '@testing-library/react-native';
+import { Platform } from 'react-native';
 import type { Folder, Space } from '@/data';
 import { MoveToFolderSheet } from '../MoveToFolderSheet';
 
@@ -7,6 +8,29 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 jest.mock('@/components/ui/Text', () => ({ Text: require('react-native').Text }));
 jest.mock('@/components/ui/SystemIcon', () => ({ SystemIcon: () => null }));
+jest.mock('@/components/ui/FormSheet', () => ({
+  FormSheet: ({
+    visible,
+    children,
+    onSubmit,
+    submitLabel,
+  }: {
+    visible: boolean;
+    children: React.ReactNode;
+    onSubmit: () => void;
+    submitLabel: string;
+  }) => {
+    const { View, Pressable, Text } = require('react-native');
+    return visible ? (
+      <View>
+        {children}
+        <Pressable onPress={onSubmit}>
+          <Text>{submitLabel}</Text>
+        </Pressable>
+      </View>
+    ) : null;
+  },
+}));
 jest.mock('@/components/ui/GlassIconButton', () => ({
   GlassIconButton: ({
     children,
@@ -61,6 +85,31 @@ const space = (overrides: Partial<Space> = {}): Space =>
     updatedAt: null,
     ...overrides,
   }) as Space;
+
+it('creates a destination folder on Android without an iOS text prompt', () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+  const onCreateAndPick = jest.fn();
+  try {
+    const screen = render(
+      <MoveToFolderSheet
+        visible
+        folders={[]}
+        folderCounts={{}}
+        excludeFolderId={null}
+        onClose={jest.fn()}
+        onPickFolder={jest.fn()}
+        onCreateAndPick={onCreateAndPick}
+      />,
+    );
+    fireEvent.press(screen.getByLabelText('Create new folder'));
+    fireEvent.changeText(screen.getByPlaceholderText('Folder name'), '  Android notes  ');
+    fireEvent.press(screen.getByText('Create Folder'));
+    expect(onCreateAndPick).toHaveBeenCalledWith('Android notes');
+  } finally {
+    Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+  }
+});
 
 describe('MoveToFolderSheet — personal-only (no team spaces): unchanged from before spaces existed', () => {
   it('renders only the folder picker, with no Spaces section at all', () => {

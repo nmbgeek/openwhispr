@@ -1,0 +1,10 @@
+{
+  "name": "android-speech",
+  "version": "1.0.0",
+  "description": "Optional on-device Android ML Kit speech recognition and battery settings",
+  "main": "src/index.ts",
+  "private": true,
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

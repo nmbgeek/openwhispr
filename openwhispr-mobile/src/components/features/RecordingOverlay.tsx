@@ -8,6 +8,7 @@ import {
   Animated,
   Easing,
   useColorScheme,
+  ScrollView,
 } from 'react-native';
 import { Text } from '@/components/ui/Text';
 import { StatusBar } from 'expo-status-bar';
@@ -24,6 +25,8 @@ type RecordingOverlayProps = {
   amplitude: number;
   waveformData: number[];
   durationSeconds: number;
+  // Undefined keeps the batch recorder UI; an empty string means live speech is listening.
+  liveTranscript?: string;
   onDone: () => void;
   onDiscard: () => void;
 };
@@ -88,6 +91,7 @@ function OverlayContent({
   durationSeconds,
   onDone,
   onDiscard,
+  liveTranscript,
 }: Omit<RecordingOverlayProps, 'visible'>) {
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
@@ -122,7 +126,10 @@ function OverlayContent({
           <Text style={[styles.timer, { color: theme.timer }]}>{formatTime(durationSeconds)}</Text>
         </View>
 
-        <View style={styles.waveformWrap} pointerEvents="none">
+        <View
+          style={[styles.waveformWrap, liveTranscript !== undefined && { top: '32%' }]}
+          pointerEvents="none"
+        >
           <RecordingBars
             isRecording
             amplitude={amplitude}
@@ -135,6 +142,30 @@ function OverlayContent({
             edgeToEdge
           />
         </View>
+
+        {liveTranscript !== undefined ? (
+          <ScrollView
+            style={{
+              position: 'absolute',
+              top: '42%',
+              left: 24,
+              right: 24,
+              bottom: insets.bottom + 160,
+            }}
+            contentContainerStyle={{ paddingBottom: 16 }}
+            testID="live-transcript"
+          >
+            <Text style={{ color: theme.timer, fontSize: 13, marginBottom: 12 }}>
+              Live · On-device
+            </Text>
+            <Text
+              accessibilityLiveRegion="polite"
+              style={{ color: theme.iconColor, fontSize: 24, lineHeight: 34 }}
+            >
+              {liveTranscript || 'Listening…'}
+            </Text>
+          </ScrollView>
+        ) : null}
 
         <Pressable
           onPress={handleDiscardPress}

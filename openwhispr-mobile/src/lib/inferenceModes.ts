@@ -51,6 +51,7 @@ const DESCRIPTIONS: Record<InferenceScope, Record<InferenceMode, string>> = {
 export function getInferenceModes(scope: InferenceScope): ModeDescriptor[] {
   return (['openwhispr', 'local', 'providers'] as const)
     .filter((mode) => mode !== 'providers' || Platform.OS === 'ios')
+    .filter((mode) => !(Platform.OS === 'android' && scope === 'text' && mode === 'local'))
     .map((mode) => ({ ...BASE[mode], description: DESCRIPTIONS[scope][mode] }));
 }
 

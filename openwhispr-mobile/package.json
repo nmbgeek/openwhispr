@@ -13,9 +13,9 @@
     "web": "expo start --web",
     "build:ios-return-map": "node scripts/build-ios-return-map.mjs",
     "download:brand-fonts": "node ../scripts/download-brand-fonts.js --output-dir assets/fonts/yowza",
-    "format": "prettier --check \"**/*.{js,jsx,ts,tsx,json,md}\"",
-    "format:write": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\"",
-    "lint": "eslint \"**/*.{js,jsx,ts,tsx}\"",
+    "format": "prettier --check \"**/*.{js,cjs,jsx,ts,tsx,json,md}\"",
+    "format:write": "prettier --write \"**/*.{js,cjs,jsx,ts,tsx,json,md}\"",
+    "lint": "eslint \"**/*.{js,cjs,jsx,ts,tsx}\"",
     "typecheck": "tsc --noEmit",
     "doctor": "expo-doctor && expo install --check",
     "check": "npm run format && npm run lint && npm run typecheck && npm run doctor",
@@ -26,7 +26,9 @@
     "test:watch": "jest --watch",
     "test:keyboard-capitalization": "sh scripts/test-keyboard-capitalization.sh",
     "postinstall": "patch-package --error-on-fail && npm run test:security && npm run download:brand-fonts",
-    "eas-build-pre-install": "bundle install"
+    "eas-build-pre-install": "node scripts/eas-pre-install.cjs",
+    "verify:android": "node scripts/verify-android.cjs",
+    "build:android:debug": "node scripts/verify-android.cjs --build"
   },
   "engines": {
     "node": "24.x"
@@ -76,6 +78,7 @@
     "expo-status-bar": "~55.0.6",
     "expo-superwall": "1.2.0",
     "expo-symbols": "~55.0.9",
+    "expo-system-ui": "~55.0.22",
     "expo-tracking-transparency": "~55.0.18",
     "expo-updates": "~55.0.33",
     "expo-video": "~55.0.21",

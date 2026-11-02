@@ -4,7 +4,7 @@ const compat = new FlatCompat({ baseDirectory: __dirname });
 
 module.exports = [
   {
-    ignores: ['node_modules/**', 'dist/**', 'build/**'],
+    ignores: ['node_modules/**', 'dist/**', '**/build/**'],
   },
   ...compat.extends('@react-native', 'prettier'),
   {
@@ -14,6 +14,10 @@ module.exports = [
       'eslint-comments/no-unused-disable': 'off',
       'react/react-in-jsx-scope': 'off',
     },
+  },
+  {
+    files: ['scripts/**/*.cjs'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'commonjs' },
   },
   {
     files: ['**/*.{ts,tsx}'],

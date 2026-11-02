@@ -97,6 +97,45 @@ jobs:
         run: node_modules/.bin/expo export --platform ios --max-workers 2 --output-dir "$RUNNER_TEMP/mobile-export"
         env:
           OPENWHISPR_APP_ENV: production
+      - name: Bundle Android
+        if: matrix.check == 'bundles'
+        run: node_modules/.bin/expo export --platform android --max-workers 2 --output-dir "$RUNNER_TEMP/mobile-android-export"
+        env:
+          OPENWHISPR_APP_ENV: production
+
+  android:
+    name: Mobile Android native build
+    needs: [changes, lockfile]
+    if: needs.changes.outputs.mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: openwhispr-mobile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: openwhispr-mobile/.nvmrc
+          cache: npm
+          cache-dependency-path: openwhispr-mobile/package-lock.json
+      # Android runner images provide the Android SDK. Set the Java version
+      # explicitly because Gradle's supported JVMs differ from the runner default.
+      - name: Select Java 17
+        run: |
+          echo "JAVA_HOME=$JAVA_HOME_17_X64" >> "$GITHUB_ENV"
+          echo "$JAVA_HOME_17_X64/bin" >> "$GITHUB_PATH"
+      - name: Install locked dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Apply reviewed dependency patches
+        run: node_modules/.bin/patch-package --error-on-fail
+      - name: Verify Android configuration and compile debug APK
+        run: npm run build:android:debug
+        env:
+          OPENWHISPR_APP_ENV: development
+          ANDROID_BUILD_ARCHITECTURES: x86_64
 
   native-transport:
     name: Mobile native Swift tests
@@ -124,7 +163,7 @@ jobs:
 
   mobile-status:
     name: Mobile CI
-    needs: [changes, lockfile, checks, native-transport]
+    needs: [changes, lockfile, checks, native-transport, android]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -137,10 +176,12 @@ jobs:
           LOCKFILE_RESULT: ${{ needs.lockfile.result }}
           CHECKS_RESULT: ${{ needs.checks.result }}
           NATIVE_TRANSPORT_RESULT: ${{ needs.native-transport.result }}
+          ANDROID_RESULT: ${{ needs.android.result }}
         run: |
           test "$CHANGES_RESULT" = success
           if [ "$MOBILE" = true ]; then
             test "$LOCKFILE_RESULT" = success
             test "$CHECKS_RESULT" = success
             test "$NATIVE_TRANSPORT_RESULT" = success
+            test "$ANDROID_RESULT" = success
           fi

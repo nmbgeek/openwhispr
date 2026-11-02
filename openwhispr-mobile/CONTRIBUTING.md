@@ -22,6 +22,7 @@ The simulator does not require an Apple Developer account. A paid Apple Develope
 For Android development:
 
 - Android Studio with Android SDK 36
+- JDK 17, with `JAVA_HOME` pointing to its installation
 - An Android emulator or physical device
 
 Android development does not require Xcode or an Apple Developer account. The EAS CLI is only required when working with EAS builds or submissions; it is not needed for normal local development.
@@ -53,6 +54,8 @@ If you plan to build on a physical iOS device, configure a unique local identity
 npm start              # Start the Metro/Expo dev server
 npm run ios            # Build and run on iOS (uses dev client)
 npm run android        # Build and run on Android
+npm run verify:android # Generate Android and verify services and speech-module autolinking
+npm run build:android:debug # Verify Android and compile a debug APK
 npm run typecheck      # tsc --noEmit
 npm run lint           # ESLint
 npm run format         # Prettier --check
@@ -66,6 +69,8 @@ npm run clean          # format + lint + typecheck
 OpenWhispr uses custom native modules, so Expo Go is not a supported development environment. Use `npm run ios` or `npm run android` to create a development build.
 
 The `android`, `ios`, and `prebuild` npm scripts use POSIX environment-variable syntax. On Windows, put `OPENWHISPR_APP_ENV=development` in `.env.local` and run `npx expo run:android` or `npx expo prebuild` directly. iOS builds still require macOS.
+
+For Android device checks, optional ML Kit models, and battery optimization settings, follow [Build and verify Android](./docs/android.md).
 
 ## Environment Variables
 
@@ -109,6 +114,10 @@ Maintainers shipping a separate fork must also replace the organization-specific
 `package.json` can't carry comments, so the reason for each entry under `overrides` is kept here. Remove an override once the package it patches no longer needs it.
 
 - `@expo/cli` → `zod` 4.6.7: `@expo/cli` 55 declares `zod ^3.25`, and no zod 3 release fixes GHSA-mrhx-c7xc-m3w5, which fails the Mobile CI audit. The CLI uses zod only to validate dev tools plugins, which works on zod 4. Drop this once `@expo/cli` depends on zod 4.
+
+Android uses Kotlin 2.3.0 because ML Kit and AppsFlyer include Kotlin metadata newer than Expo SDK 55's default compiler can read. `plugins/android-build/withAndroidBuild.js` also sets the root Kotlin plugin classpath to that configured version. The same plugin preserves SecureStore's backup exclusions when AppsFlyer's library manifest declares competing backup files.
+
+`patches/react-native-gesture-handler+2.30.0.patch` calls React Native's Kotlin `getRootViewTag()` method explicitly. The property-style call in the published dependency does not compile against the current React Native interface. Remove the patch when upgrading to a version that includes the fix.
 
 ## Pull Request Checklist
 

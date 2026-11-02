@@ -150,6 +150,7 @@ export function GraduationStep() {
   });
 
   useEffect(() => {
+    if (!isIOS) return;
     let cancelled = false;
     const probeTargets = TARGETS.filter((t) => !t.alwaysAvailable);
 
@@ -206,6 +207,30 @@ export function GraduationStep() {
     },
     [finish],
   );
+
+  if (!isIOS) {
+    return (
+      <OnboardingShell
+        title="You're ready to record"
+        subtitle="Tap the microphone in Record to transcribe your voice, or upload an audio file. Copy and share transcripts with other apps, and organize your writing in Notes."
+        ctaLabel="Start using OpenWhispr"
+        onCta={() => complete()}
+        ctaLoading={busy}
+      >
+        <View className="flex-1 items-center justify-center gap-5">
+          <SystemIcon name="mic.fill" mdName="Mic" size={72} color="brand" />
+          <Text className="text-center text-[16px] text-secondaryLabel">
+            Your processing choices are available anytime in Settings, under AI Models.
+          </Text>
+          {error ? (
+            <Text accessibilityRole="alert" className="text-systemRed">
+              {error}
+            </Text>
+          ) : null}
+        </View>
+      </OnboardingShell>
+    );
+  }
 
   return (
     <OnboardingShell

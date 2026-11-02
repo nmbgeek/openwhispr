@@ -1,8 +1,9 @@
 import React from 'react';
-import { Alert } from 'react-native';
+import { Alert, Platform } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 let mockRouteParams: { proCompletion?: string } = {};
+let mockIsGuest = false;
 const mockRouterSetParams = jest.fn();
 const mockRegisterSuperwallGate = jest.fn();
 const mockUsageStoreState = { usage: null, load: jest.fn() };
@@ -104,7 +105,8 @@ jest.mock('@/store/useConfigStore', () => ({
     selector({ updateConfig: jest.fn() }),
 }));
 jest.mock('@/store/useAuthStore', () => ({
-  useAuthStore: (selector: (state: { user: null }) => unknown) => selector({ user: null }),
+  useAuthStore: (selector: (state: { user: null; isGuest: boolean }) => unknown) =>
+    selector({ user: null, isGuest: mockIsGuest }),
 }));
 jest.mock('@/store/useHandoffStore', () => ({
   useHandoffStore: (selector: (state: typeof mockHandoffStoreState) => unknown) =>
@@ -156,6 +158,21 @@ jest.mock('@/components/ui/UsageMeter', () => ({ UsageLimitBanner: () => null })
 jest.mock('@/components/ui/GradientGlassSurface', () => ({ GradientGlassSurface: () => null }));
 
 import HomeScreen from '../HomeScreen';
+
+it('keeps Account reachable from Android Home without the iOS dictation control', () => {
+  const originalOS = Platform.OS;
+  Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
+  mockIsGuest = true;
+  try {
+    render(<HomeScreen />);
+    fireEvent.press(screen.getByLabelText('Account'));
+    expect(require('expo-router').router.push).toHaveBeenCalledWith('/(account)');
+    expect(screen.queryByLabelText('Dictation mode')).toBeNull();
+  } finally {
+    mockIsGuest = false;
+    Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
+  }
+});
 
 describe('HomeScreen Pro completion', () => {
   beforeEach(() => {

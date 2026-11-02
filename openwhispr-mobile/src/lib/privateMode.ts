@@ -1,6 +1,8 @@
 import { Alert } from 'react-native';
 import { router } from 'expo-router';
 import { LocalTranscriptionService } from '@/services/transcription/LocalTranscriptionService';
+import { getPickedLocalModel } from '@/lib/inferenceRouting';
+import { isLocalSpeechModelKey } from '@/lib/localSpeechModels';
 
 export type PrivateModeStatus = 'ready' | 'missing' | 'unavailable';
 
@@ -12,19 +14,25 @@ export interface PrivateModeReadiness {
 
 /**
  * Whether private mode can transcribe right now: the engine the user's language selection
- * routes to (Parakeet v2/v3 or Whisper) has its model downloaded. The legacy modelName
- * parameter is accepted for call-site compatibility but ignored — readiness is language-aware.
+ * routes to has its model downloaded. Explicit ML Kit selections also check device and locale
+ * support. With no argument this checks the current dictation choice.
  */
 export async function getPrivateModeReadiness(
-  _legacyModelName?: string,
+  selectedModel?: string,
 ): Promise<PrivateModeReadiness> {
-  const modelName = LocalTranscriptionService.preferredEngineDescriptor().label;
+  const model =
+    selectedModel === undefined
+      ? getPickedLocalModel('dictation')
+      : isLocalSpeechModelKey(selectedModel)
+        ? selectedModel
+        : undefined;
+  const modelName = LocalTranscriptionService.preferredEngineDescriptor(model).label;
 
   if (!LocalTranscriptionService.isAvailable()) {
     return { status: 'unavailable', modelName };
   }
 
-  const ready = await LocalTranscriptionService.isReadyForLanguage();
+  const ready = await LocalTranscriptionService.isReadyForLanguage(model);
   return { status: ready ? 'ready' : 'missing', modelName };
 }
 

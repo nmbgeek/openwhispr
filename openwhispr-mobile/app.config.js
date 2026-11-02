@@ -139,7 +139,7 @@ module.exports = () => {
 
   return {
     ...expo,
-    name: expo.name,
+    name: environment.displayName,
     scheme: singleOrMany([environment.scheme, googleCalendar.iosRedirectScheme]),
     ios: {
       ...expo.ios,
