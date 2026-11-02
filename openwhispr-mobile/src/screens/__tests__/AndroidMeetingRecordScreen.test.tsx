@@ -138,7 +138,9 @@ it('retains notification Stop audio immediately and waits for foreground before 
   );
   const view = render(<AndroidMeetingRecordScreen />);
   await start(view);
-  mockRecorder.isRecording = false;
+  // Native Stop calls back before the screen sees the hook's scheduled
+  // isRecording=false update. Keep that stale true value for this regression.
+  expect(mockRecorder.isRecording).toBe(true);
   act(() => mockFinished?.(null));
   await waitFor(() =>
     expect(mockState.retainMeetingRecording).toHaveBeenCalledWith(

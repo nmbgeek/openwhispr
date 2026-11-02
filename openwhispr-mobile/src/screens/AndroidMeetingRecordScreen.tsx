@@ -16,7 +16,12 @@ import { useConfigStore } from '@/store/useConfigStore';
 import { useNotesStore, type MeetingSpeechOptions } from '@/store/useNotesStore';
 
 type Phase = 'idle' | 'starting' | 'recording' | 'saving' | 'waiting' | 'processing' | 'failed';
-type Session = { noteId: number; startedAt: number; speech: MeetingSpeechOptions };
+type Session = {
+  noteId: number;
+  startedAt: number;
+  speech: MeetingSpeechOptions;
+  externallyStopped: boolean;
+};
 
 /** Background capture is separate from foreground-only live dictation and speaker diarization. */
 export function AndroidMeetingRecordScreen() {
@@ -46,8 +51,10 @@ export function AndroidMeetingRecordScreen() {
       if (mounted.current) setError(failure.message);
     },
     onRecordingFinished: (failure) => {
-      if (sessionRef.current) finishRef.current(failure).catch(() => undefined);
-      else if (startingRef.current) pendingFinish.current = { error: failure };
+      if (sessionRef.current) {
+        sessionRef.current.externallyStopped = true;
+        finishRef.current(failure).catch(() => undefined);
+      } else if (startingRef.current) pendingFinish.current = { error: failure };
     },
   });
 
@@ -142,7 +149,12 @@ export function AndroidMeetingRecordScreen() {
         await recording.cancelRecording();
         throw failure;
       }
-      sessionRef.current = { noteId: note.id, startedAt: Date.now(), speech };
+      sessionRef.current = {
+        noteId: note.id,
+        startedAt: Date.now(),
+        speech,
+        externallyStopped: pendingFinish.current !== null,
+      };
       setPhase('recording');
       const pending = pendingFinish.current;
       pendingFinish.current = null;
@@ -175,7 +187,7 @@ export function AndroidMeetingRecordScreen() {
       // Notification-stop delivery can be delayed while JS is asleep, so do not
       // pretend the wall clock is the audio duration for an external stop.
       const duration =
-        nativeError === null && recording.isRecording
+        nativeError === null && !session.externallyStopped
           ? Math.max(0, (Date.now() - session.startedAt) / 1000)
           : undefined;
       const retained = await useNotesStore
