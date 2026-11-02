@@ -40,6 +40,8 @@ import kotlinx.coroutines.withTimeout
 internal interface AndroidAudioSession {
   val id: String
   val lifetime: CompletableJob
+  val allowsBackgroundRecording: Boolean
+  fun setAppForeground(foreground: Boolean)
   suspend fun start()
   suspend fun stop(): Map<String, Any>
   suspend fun cancel()
@@ -50,12 +52,14 @@ internal class AndroidAudioCaptureSession(
   override val id: String,
   private val context: Context,
   override val lifetime: CompletableJob,
+  override val allowsBackgroundRecording: Boolean = false,
   private val emitPcmToJs: Boolean = false,
   private val durationLimitMs: Long? = null,
   private val onPcm: (ByteArray) -> Unit = {},
   private val onCaptureFinished: () -> Unit = {},
   private val onInterrupt: () -> Unit = {},
   private val onDispose: () -> Unit = {},
+  private val onVisibilityChanged: (Boolean) -> Unit = {},
   private val emit: (Map<String, Any>) -> Unit
 ) : AndroidAudioSession {
   private data class Failure(val code: String, val message: String) {
@@ -69,6 +73,11 @@ internal class AndroidAudioCaptureSession(
   private var failure: Failure? = null
   private val stopRequested = AtomicBoolean(false)
   private val cancelled = AtomicBoolean(false)
+  private val captureStarted = AtomicBoolean(false)
+  private val foreground = AtomicBoolean(true)
+  private val visibilityVersion = AtomicLong(0L)
+  private var previewVisibilityVersion = 0L
+  private var foregroundLease: MicrophoneForegroundLease? = null
   private val frameCount = AtomicLong(0L)
   private val record = AtomicReference<AudioRecord?>(null)
   private val captureReady = CompletableDeferred<Unit>()
@@ -84,14 +93,31 @@ internal class AndroidAudioCaptureSession(
   val isStopping: Boolean get() = stopRequested.get()
   val isCancelled: Boolean get() = cancelled.get()
   val hasFailure: Boolean get() = synchronized(failureLock) { failure != null }
+  val isAppForeground: Boolean get() = foreground.get()
+  val hasStartedCapture: Boolean get() = captureStarted.get()
+
+  override fun setAppForeground(foreground: Boolean) {
+    if (this.foreground.getAndSet(foreground) == foreground) return
+    visibilityVersion.incrementAndGet()
+    onVisibilityChanged(foreground)
+  }
 
   override suspend fun start() = startPrepared {}
 
   suspend fun startPrepared(prepare: suspend () -> Unit) {
     if (closed || cancelled.get()) throw error("STALE_SESSION", "This recording session has already ended.")
     val task = scope.async<Unit> {
+      if (!foreground.get()) throw error("BACKGROUND_START", "Open OpenWhispr before starting a recording.")
       if (context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
         throw error("PERMISSION", "Allow microphone access to record audio.")
+      }
+      if (allowsBackgroundRecording) {
+        if (!foreground.get()) throw error("BACKGROUND_START", "Open OpenWhispr before starting a background recording.")
+        foregroundLease = MicrophoneForegroundLease.acquire(context, id) {
+          fail("BACKGROUND_SERVICE_STOPPED", "Background recording was interrupted. Your captured audio can be saved.")
+          stopRequested.set(true)
+          stopMicrophone()
+        }
       }
       prepare()
       currentCoroutineContext().ensureActive()
@@ -114,10 +140,14 @@ internal class AndroidAudioCaptureSession(
       }
       synchronized(microphoneLock) {
         if (cancelled.get() || !lifetime.isActive) throw CancellationException("Recording was cancelled before microphone start.")
+        if (stopRequested.get() || hasFailure || (allowsBackgroundRecording && foregroundLease?.isActive() != true)) {
+          throw error("BACKGROUND_SERVICE_STOPPED", "Recording could not start because its audio service stopped.")
+        }
         recorder.startRecording()
         if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
           throw error("MICROPHONE_UNAVAILABLE", "The microphone did not start recording.")
         }
+        captureStarted.set(true)
       }
       captureJob = scope.launch { captureAudio(recorder) }
       captureReady.await()
@@ -157,8 +187,15 @@ internal class AndroidAudioCaptureSession(
               energy += sample.toDouble() * sample
             }
             output.write(bytes.array())
-            frameCount.addAndGet(count.toLong())
-            if (!hasFailure) {
+            val totalFrames = frameCount.addAndGet(count.toLong())
+            val version = visibilityVersion.get()
+            if (emitPcmToJs && version != previewVisibilityVersion) {
+              previewVisibilityVersion = version
+              previewBytes.reset()
+              previewFrameOffset = totalFrames - count
+              if (foreground.get()) send(mapOf("type" to "preview-reset"))
+            }
+            if (!hasFailure && foreground.get()) {
               onPcm(bytes.array())
               if (emitPcmToJs) {
                 previewBytes.write(bytes.array())
@@ -183,6 +220,8 @@ internal class AndroidAudioCaptureSession(
       if (!cancelled.get() && emitPcmToJs) flushPcmEvent()
       runCatching { onCaptureFinished() }
       releaseMicrophone()
+      // Native completion must release foreground resources even when JS is suspended.
+      runCatching { foregroundLease?.close() }
     }
   }
 
@@ -208,6 +247,7 @@ internal class AndroidAudioCaptureSession(
   }
 
   fun send(event: Map<String, Any>) {
+    if ((event["type"] == "audio" || event["type"] == "level") && !foreground.get()) return
     if (!cancelled.get()) runCatching { emit(event + ("sessionId" to id)) }
   }
 
@@ -273,6 +313,8 @@ internal class AndroidAudioCaptureSession(
     } finally {
       releaseMicrophone()
       runCatching { onDispose() }
+      runCatching { foregroundLease?.close() }
+      foregroundLease = null
       if (deleteAudio) file.delete()
       closed = true
     }

@@ -9,6 +9,7 @@ export type AndroidSpeechStatus = {
 
 export type AndroidLiveSpeechEvent =
   | { type: 'transcript'; sessionId: string; text: string; isFinal: boolean }
+  | { type: 'preview-paused'; sessionId: string }
   | { type: 'level'; sessionId: string; level: number }
   | { type: 'error'; sessionId: string; message: string; code: string };
 
@@ -17,9 +18,11 @@ export interface AndroidLiveSpeechResult {
   fileUri: string;
   durationMs: number;
   error?: { code: string; message: string };
+  requiresFinalTranscription?: boolean;
 }
 
 export type AndroidCaptureAudioEvent =
+  | { type: 'preview-reset'; sessionId: string }
   | {
       type: 'audio';
       sessionId: string;
@@ -39,10 +42,16 @@ export interface AndroidCaptureAudioResult {
 type LiveSubscription = { remove(): void };
 
 interface NativeAndroidSpeech {
-  startCapture?(sessionId: string): Promise<void>;
+  supportsBackgroundRecording?: boolean;
+  startCapture?(sessionId: string, allowsBackgroundRecording?: boolean): Promise<void>;
   stopCapture?(sessionId: string): Promise<AndroidCaptureAudioResult>;
   cancelCapture?(sessionId: string): Promise<void>;
-  startLive?(sessionId: string, mode: AndroidSpeechMode, locale: string): Promise<void>;
+  startLive?(
+    sessionId: string,
+    mode: AndroidSpeechMode,
+    locale: string,
+    allowsBackgroundRecording?: boolean,
+  ): Promise<void>;
   stopLive?(sessionId: string): Promise<AndroidLiveSpeechResult>;
   cancelLive?(sessionId: string): Promise<void>;
   addListener?: {
@@ -93,6 +102,10 @@ export const AndroidSpeech = {
     return nativeModule !== null;
   },
 
+  isBackgroundRecordingAvailable(): boolean {
+    return nativeModule?.supportsBackgroundRecording === true;
+  },
+
   isLiveAvailable(): boolean {
     return (
       nativeModule !== null &&
@@ -113,10 +126,17 @@ export const AndroidSpeech = {
     );
   },
 
-  async startCapture(sessionId: string): Promise<void> {
+  async startCapture(sessionId: string, allowsBackgroundRecording = false): Promise<void> {
     const start = requireModule().startCapture;
     if (!start) throw new Error('Live Whisper requires an updated Android native build.');
-    await withCancellation(() => start.call(nativeModule, sessionId));
+    if (allowsBackgroundRecording && !this.isBackgroundRecordingAvailable()) {
+      throw new Error('Background recording requires an updated Android native build.');
+    }
+    await withCancellation(() =>
+      allowsBackgroundRecording
+        ? start.call(nativeModule, sessionId, true)
+        : start.call(nativeModule, sessionId),
+    );
   },
 
   async stopCapture(sessionId: string): Promise<AndroidCaptureAudioResult> {
@@ -133,10 +153,22 @@ export const AndroidSpeech = {
     return nativeModule?.addListener?.('capture-audio', listener) ?? { remove() {} };
   },
 
-  async startLive(sessionId: string, mode: AndroidSpeechMode, locale: string): Promise<void> {
+  async startLive(
+    sessionId: string,
+    mode: AndroidSpeechMode,
+    locale: string,
+    allowsBackgroundRecording = false,
+  ): Promise<void> {
     const start = requireModule().startLive;
     if (!start) throw new Error('Live speech requires an updated Android native build.');
-    await withCancellation(() => start.call(nativeModule, sessionId, mode, locale));
+    if (allowsBackgroundRecording && !this.isBackgroundRecordingAvailable()) {
+      throw new Error('Background recording requires an updated Android native build.');
+    }
+    await withCancellation(() =>
+      allowsBackgroundRecording
+        ? start.call(nativeModule, sessionId, mode, locale, true)
+        : start.call(nativeModule, sessionId, mode, locale),
+    );
   },
 
   async stopLive(sessionId: string): Promise<AndroidLiveSpeechResult> {

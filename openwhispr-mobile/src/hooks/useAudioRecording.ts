@@ -42,6 +42,8 @@ export interface UseAudioRecordingOptions {
   onComplete?: (text: string) => void;
   onError?: (error: Error) => void;
   allowsBackgroundRecording?: boolean;
+  // A system/notification Stop finalized the raw recording outside our own stop handler.
+  onRecordingFinished?: (error: Error | null) => void;
   // Defaults to true. When false, nothing reaches transcript history (no row on
   // success or failure) and the recording is deleted once its outcome is known.
   saveToHistory?: boolean;
@@ -81,6 +83,7 @@ type LiveRecordingSession = {
   phase: 'starting' | 'recording' | 'stopping';
   cancelled: boolean;
   retainHistory: boolean;
+  allowsBackgroundRecording: boolean;
   error: Error | null;
   subscription: { remove: () => void } | null;
 };
@@ -105,6 +108,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   const [currentText, setCurrentText] = useState('');
   const [isLiveTranscription, setIsLiveTranscription] = useState(false);
   const [livePreviewIsRecent, setLivePreviewIsRecent] = useState(false);
+  const [livePreviewPaused, setLivePreviewPaused] = useState(false);
   const [liveLevel, setLiveLevel] = useState(0);
   const liveSessionRef = useRef<LiveRecordingSession | null>(null);
   const startingRef = useRef(false);
@@ -128,8 +132,52 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   // which then reports not recording, so cancel can't read that from the recorder.
   const openRef = useRef(false);
 
+  const latestOptionsRef = useRef(options);
+  latestOptionsRef.current = options;
+  const finishedAudioRef = useRef<string | null>(null);
+  const finishedAudioErrorRef = useRef<Error | null>(null);
+  const nativeFinishDrainRef = useRef<Promise<void> | null>(null);
+  const intentionalStopUrisRef = useRef<string[]>([]);
+  const rememberIntentionalStop = (uri: string | null) => {
+    if (uri) intentionalStopUrisRef.current = [...intentionalStopUrisRef.current.slice(-15), uri];
+  };
   const recorderOptions = getDefaultRecorderOptions();
-  const audioRecorder = useAudioRecorder(recorderOptions);
+  const audioRecorder = useAudioRecorder(recorderOptions, (status) => {
+    if (
+      (!latestOptionsRef.current.onRecordingFinished &&
+        latestOptionsRef.current.allowsBackgroundRecording !== true) ||
+      !status.isFinished ||
+      !openRef.current ||
+      stoppingRef.current
+    )
+      return;
+    if (status.url && intentionalStopUrisRef.current.includes(status.url)) return;
+    finishedAudioRef.current = status.url ?? audioRecorder.uri ?? null;
+    openRef.current = false;
+    if (mountedRef.current) setIsRecording(false);
+    const error = status.hasError
+      ? new Error(status.error || 'The recording was interrupted.')
+      : null;
+    finishedAudioErrorRef.current = error;
+    const notifyFinished = () => {
+      if (!mountedRef.current || abandonedRef.current) return;
+      if (latestOptionsRef.current.onRecordingFinished)
+        latestOptionsRef.current.onRecordingFinished(error);
+      else void stopRef.current().catch(() => undefined);
+    };
+    if (error) {
+      // Expo emits media-server errors before stopping the recorder/service.
+      // Drain that owner before a caller retains or retries the interrupted file.
+      rememberIntentionalStop(finishedAudioRef.current);
+      nativeFinishDrainRef.current = audioRecorder
+        .stop()
+        .catch(() => undefined)
+        .then(() => {
+          nativeFinishDrainRef.current = null;
+          notifyFinished();
+        });
+    } else notifyFinished();
+  });
   const isSupported = isExpoAudioAvailable() && !!audioRecorder;
   const allowsBackgroundRecording = options.allowsBackgroundRecording === true;
   const saveToHistory = options.saveToHistory !== false;
@@ -144,6 +192,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       if (
         state !== 'active' &&
         session &&
+        !session.allowsBackgroundRecording &&
         (session.phase !== 'stopping' || !session.retainHistory)
       ) {
         void cancelRef.current().catch(() => undefined);
@@ -179,7 +228,15 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   };
 
   const startRecording = async () => {
-    if (startingRef.current || openRef.current || stoppingRef.current || isProcessing) return;
+    if (
+      startingRef.current ||
+      openRef.current ||
+      stoppingRef.current ||
+      nativeFinishDrainRef.current ||
+      finishedAudioRef.current ||
+      isProcessing
+    )
+      return;
     startingRef.current = true;
     abandonedRef.current = false;
     try {
@@ -237,7 +294,22 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         });
       }
 
+      if (Platform.OS === 'android' && allowsBackgroundRecording) {
+        const notificationPermission =
+          await audioModule.AudioModule.requestNotificationPermissionsAsync();
+        if (!notificationPermission.granted) {
+          throw new Error(
+            'Notification permission is required to keep recording in the background.',
+          );
+        }
+      }
+
       if (liveChoice) {
+        if (allowsBackgroundRecording && !AndroidSpeech.isBackgroundRecordingAvailable()) {
+          throw new Error(
+            'Background speech recording needs the updated Android app. Install the latest native build.',
+          );
+        }
         const { model, locale } = liveChoice;
         if (isMlKitModelKey(model)) {
           const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
@@ -252,11 +324,12 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         const session: LiveRecordingSession = {
           id,
           model,
-          recorder: createAndroidLiveRecorder(id, model, locale),
+          recorder: createAndroidLiveRecorder(id, model, locale, allowsBackgroundRecording),
           locale,
           phase: 'starting',
           cancelled: false,
           retainHistory: saveToHistory,
+          allowsBackgroundRecording,
           error: null,
           subscription: null,
         };
@@ -271,7 +344,10 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
             session.cancelled
           )
             return;
-          if (event.type === 'transcript') setCurrentText(event.text);
+          if (event.type === 'preview-paused') {
+            setLivePreviewPaused(true);
+            setCurrentText('');
+          } else if (event.type === 'transcript') setCurrentText(event.text);
           else if (event.type === 'level') setLiveLevel(Math.max(0, Math.min(1, event.level)));
           else {
             session.error = Object.assign(new Error(event.message), { code: event.code });
@@ -287,19 +363,10 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         openRef.current = true;
         setIsLiveTranscription(true);
         setLivePreviewIsRecent(model === 'whisper-base');
+        setLivePreviewPaused(false);
         setIsRecording(true);
         if (session.error) void stopRef.current().catch(() => undefined);
         return;
-      }
-
-      if (Platform.OS === 'android' && allowsBackgroundRecording) {
-        const notificationPermission =
-          await audioModule.AudioModule.requestNotificationPermissionsAsync();
-        if (!notificationPermission.granted) {
-          throw new Error(
-            'Notification permission is required to keep recording in the background.',
-          );
-        }
       }
 
       try {
@@ -312,6 +379,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
           allowsBackgroundRecording,
         });
       } catch (audioModeError) {
+        if (allowsBackgroundRecording) throw audioModeError;
         console.warn('[audio] Failed to set audio mode:', audioModeError);
       }
 
@@ -322,7 +390,17 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         } catch {}
       }
 
+      if (!mountedRef.current || !appActiveRef.current || abandonedRef.current) return;
+      finishedAudioRef.current = null;
+      finishedAudioErrorRef.current = null;
       await recorder.prepareToRecordAsync(recorderOptions);
+      if (!mountedRef.current || !appActiveRef.current || abandonedRef.current) {
+        const uri = recorder.uri;
+        rememberIntentionalStop(uri);
+        await recorder.stop().catch(() => undefined);
+        if (uri) await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+        return;
+      }
       await recorder.record();
       openRef.current = true;
 
@@ -360,19 +438,26 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     try {
       const { audioRecorder: recorder } = ensureAudioSupport();
 
-      if (!isRecording || stoppingRef.current) {
+      if ((!isRecording && !finishedAudioRef.current) || stoppingRef.current) {
         return;
       }
 
+      const externallyFinished = finishedAudioRef.current;
+      const nativeError = finishedAudioErrorRef.current;
+      finishedAudioRef.current = null;
+      finishedAudioErrorRef.current = null;
       stoppingRef.current = true;
       try {
-        await recorder.stop();
+        if (!externallyFinished) {
+          rememberIntentionalStop(recorder.uri);
+          await recorder.stop();
+        }
         openRef.current = false;
       } finally {
         stoppingRef.current = false;
       }
 
-      const uri = recorder.uri;
+      const uri = externallyFinished ?? recorder.uri;
       if (!saveToHistory) sourceUriToDiscard = uri ?? null;
 
       setIsRecording(false);
@@ -410,6 +495,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       sourceUriToDiscard = null;
       const transcriptionProvider = jobRouteRef.current.provider;
       try {
+        if (nativeError) throw nativeError;
         await finalizeRecording(retained, transcriptionProvider, clientTranscriptionId);
       } catch (transcribeError) {
         if (isCancelled()) {
@@ -527,6 +613,28 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     if (isCancelled()) {
       await discardRetainedAudio(retained);
       return;
+    }
+    if (provider === 'local' && Platform.OS === 'android' && !appActiveRef.current) {
+      // A notification can finish capture while the app is hidden. Keep the
+      // retained audio until on-device inference is allowed again, or cancelled.
+      await new Promise<void>((resolve) => {
+        const check = () => {
+          if (!appActiveRef.current && !isCancelled()) return;
+          subscription.remove();
+          clearInterval(timer);
+          resolve();
+        };
+        const subscription = AppState.addEventListener('change', (state) => {
+          appActiveRef.current = state === 'active';
+          check();
+        });
+        const timer = setInterval(check, 250);
+        check();
+      });
+      if (isCancelled()) {
+        await discardRetainedAudio(retained);
+        return;
+      }
     }
     const request: TranscriptionRequest = {
       ...jobRouteRef.current,
@@ -714,6 +822,8 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   // stop already claimed is left to it, file and processing state alike. The claim is held until
   // the recording is gone, so a send landing meanwhile can't stop it again and read the deleted file.
   const cancelRecording = async (): Promise<void> => {
+    if (startingRef.current || nativeFinishDrainRef.current) abandonedRef.current = true;
+    if (nativeFinishDrainRef.current) await nativeFinishDrainRef.current;
     const liveSession = liveSessionRef.current;
     if (liveSession) {
       liveSession.cancelled = true;
@@ -734,6 +844,10 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     }
     if (stoppingRef.current) return;
     if (!audioRecorder || (!audioRecorder.isRecording && !openRef.current)) {
+      const finished = finishedAudioRef.current;
+      finishedAudioRef.current = null;
+      if (finished)
+        await FileSystem.deleteAsync(finished, { idempotent: true }).catch(() => undefined);
       setIsRecording(false);
       return;
     }
@@ -744,6 +858,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       const paused = !audioRecorder.isRecording;
       try {
         // A paused recorder ignores cancel; stopping it finishes the file so it can be deleted.
+        rememberIntentionalStop(uri);
         await audioRecorder.stop();
       } catch (stopError) {
         if (!paused) throw stopError;
@@ -763,9 +878,17 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
 
   // Meeting-specific: stops recording and returns the raw URI without running the dictation finalize path.
   const stopRecordingRaw = async (): Promise<string | null> => {
-    if (!audioRecorder.isRecording) return null;
+    if (nativeFinishDrainRef.current) await nativeFinishDrainRef.current;
+    if (stoppingRef.current) return null;
+    if (finishedAudioRef.current) {
+      const uri = finishedAudioRef.current;
+      finishedAudioRef.current = null;
+      return uri;
+    }
+    if (!audioRecorder.isRecording && !openRef.current) return null;
     stoppingRef.current = true;
     try {
+      rememberIntentionalStop(audioRecorder.uri);
       await audioRecorder.stop();
       openRef.current = false;
     } finally {
@@ -782,6 +905,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     currentText,
     isLiveTranscription,
     livePreviewIsRecent,
+    livePreviewPaused,
     liveLevel,
     isSupported,
     startRecording,

@@ -261,7 +261,8 @@ describe('repairMeetingRecordings', () => {
     const deps = {
       listRecordingFiles: jest.fn(async () => files),
       getNote: jest.fn((id: number) => notes.find((candidate) => candidate.id === id) ?? null),
-      recordingUri: (id: number) => `file:///docs/meeting-${id}.wav`,
+      recordingUri: (id: number, fileName?: string) =>
+        `file:///docs/${fileName ?? `meeting-${id}.wav`}`,
       restorePath: jest.fn(),
       deleteFile: jest.fn(),
     };
@@ -281,6 +282,12 @@ describe('repairMeetingRecordings', () => {
 
     expect(deps.deleteFile).toHaveBeenCalledWith('file:///docs/meeting-9.wav');
     expect(deps.restorePath).not.toHaveBeenCalled();
+  });
+
+  it('repairs Android M4A paths using the actual recording filename', async () => {
+    const deps = await run(['meeting-4.m4a', 'meeting-9.m4a'], [note({ id: 4, sourceFile: null })]);
+    expect(deps.restorePath).toHaveBeenCalledWith(4, 'file:///docs/meeting-4.m4a');
+    expect(deps.deleteFile).toHaveBeenCalledWith('file:///docs/meeting-9.m4a');
   });
 
   it('leaves notes that still point somewhere, other note types, and other files alone', async () => {

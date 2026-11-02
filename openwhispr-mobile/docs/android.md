@@ -48,7 +48,7 @@ The live-session tests also open and release the device microphone to check canc
 
 ## Check speech recognition on a device
 
-For live text, open **Account > AI Models > Dictation**, choose **On-Device**, and select Whisper base or a ready ML Kit Basic or Advanced model. Home and Note Editor then display changing partial text while recording. Only the final transcript is saved. Failed sessions retain audio for retry; completed transcripts release their audio, following the existing privacy policy. ML Kit saves its final live result without another transcription pass. Whisper shows a rolling eight-second recent preview, then transcribes the entire retained recording once when you tap Done. The final text can differ from the draft. Whisper preview updates depend on device speed and may use more battery.
+For live text, open **Account > AI Models > Dictation**, choose **On-Device**, and select Whisper base or a ready ML Kit Basic or Advanced model. Home and Note Editor then display changing partial text while recording. Only the final transcript is saved. Failed sessions retain audio for retry; completed transcripts release their audio, following the existing privacy policy. ML Kit saves its final live result without another transcription pass when the entire recording stays in the foreground. If capture continues in the background, its live preview pauses and the app transcribes the full retained audio after returning to the foreground. Whisper shows a rolling eight-second recent preview, then transcribes the entire retained recording once when you tap Done. The final text can differ from the draft. Whisper preview updates depend on device speed and may use more battery.
 
 Basic file uploads process at playback speed. The app streams their decoded audio because the Basic service on the tested Samsung rejects the SDK's whole-file recognition mode. Advanced file uploads use whole-file recognition. Both routes stay on the device.
 
@@ -65,13 +65,23 @@ ML Kit speech recognition is an alpha API. Basic uses traditional on-device reco
 
 ## Check long recordings and system settings
 
-1. Allow microphone access when prompted. Core dictation records in the foreground; keep the app open while recording. Live capture is cancelled if the app goes into the background. A recording you already stopped still finishes saving if you leave the screen. Background meeting recording is not part of this Android release.
+1. Allow microphone and notification access when prompted. Start recording while OpenWhispr is visible. Record, Note Editor, chat voice input, and **Notes > + > Record meeting** continue capture when you switch apps or lock the screen, with an ongoing recording notification. For live Record and Note Editor sessions, tap the notification to return and finish. Meeting and chat recording notifications also offer **Stop**. Whisper previews pause while the app is in the background and resume with fresh recent audio. ML Kit previews pause after backgrounding; the full recording is transcribed after you return. Foreground-only text processing waits until OpenWhispr is active. Android meetings produce a private local plain transcript without speaker separation or automatic AI summaries. A recording you already stopped still finishes saving if you leave its screen.
 2. Check interruptions, screen locking, and returning to the app on a physical device. Confirm that interruptions never produce a successful, silently truncated transcript.
 3. Verify that failed recordings remain available for retry.
 4. Open the battery optimization option in Preferences. Confirm that it shows the current exemption state and opens Android's system settings only after you tap it.
 5. Return from system settings and verify that the displayed state refreshes. Denying an exemption must not block normal app use.
 
-Battery optimization exemption does not grant microphone permission, enable background dictation, or guarantee uninterrupted processing. The build includes Expo's microphone foreground service for future background recording flows. Test both restricted and exempt states on a physical device. See Android's [Doze and App Standby guide](https://developer.android.com/training/monitoring-device-state/doze-standby).
+Background recording requires microphone and notification permissions. Start recording while the app is visible. Battery optimization exemption does not grant microphone permission or guarantee uninterrupted processing. The microphone foreground service keeps audio capture active while you use other apps or lock the screen. Force-stopping the app or ending its system recording service ends capture; the app does not restart the microphone automatically. Test both restricted and exempt states on a physical device. See Android's [Doze and App Standby guide](https://developer.android.com/training/monitoring-device-state/doze-standby).
+
+## Verify background meetings
+
+1. Start a meeting from Notes, speak a foreground marker, then press Home and speak a second marker.
+2. Lock the screen, speak a third marker, unlock, and finish the meeting. Verify all markers and the full recording duration.
+3. Repeat using the recording notification's Stop action. Confirm the meeting finalizes once and the notification disappears.
+4. Deny notification permission and verify the app explains why a background meeting cannot start.
+5. Cancel a Record or Note Editor dictation recording and confirm its microphone service stops and no partial transcript is saved as successful.
+6. Repeat background and lock-screen capture with Whisper and both ready ML Kit modes in Record and Note Editor. Confirm foreground, background, and resumed speech all appear in the final text, and that preview text never becomes a successful partial transcript after an interruption.
+7. Repeat with chat voice input. Stop from the notification while backgrounded, then return and confirm the complete question is processed once.
 
 ## Prepare an Android release
 

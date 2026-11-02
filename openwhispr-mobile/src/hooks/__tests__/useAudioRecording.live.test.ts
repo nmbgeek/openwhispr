@@ -93,6 +93,7 @@ const mockRemoveListener = jest.fn();
 jest.mock('../../../modules/android-speech/src', () => ({
   AndroidSpeech: {
     isLiveAvailable: jest.fn(() => true),
+    isBackgroundRecordingAvailable: jest.fn(() => true),
     isCaptureAvailable: jest.fn(() => true),
     startCapture: jest.fn(async () => undefined),
     stopCapture: jest.fn(async () => ({ fileUri: 'file:///whisper.wav', durationMs: 3200 })),
@@ -122,6 +123,7 @@ beforeEach(() => {
   mockRoute = { provider: 'local', cleanupRoute: { mode: 'local', scope: 'cleanup' } };
   mockRecorder.isRecording = false;
   jest.mocked(AndroidSpeech.isLiveAvailable).mockReturnValue(true);
+  jest.mocked(AndroidSpeech.isBackgroundRecordingAvailable).mockReturnValue(true);
   jest
     .mocked(AndroidSpeech.stopLive)
     .mockResolvedValue({ text: 'Final words.', fileUri: 'file:///live.wav', durationMs: 2400 });
@@ -473,9 +475,16 @@ test('backgrounding after Stop does not discard its committed recording', async 
   await act(async () => {
     callback?.('background');
     resolveStop?.({ text: 'Final words', fileUri: 'file:///committed.wav', durationMs: 1000 });
-    await stopped;
+    await Promise.resolve();
   });
   expect(AndroidSpeech.cancelLive).not.toHaveBeenCalled();
+  expect(mockAddTranscript).not.toHaveBeenCalled();
+  await act(async () => {
+    listener.mock.calls
+      .filter(([event]) => event === 'change')
+      .forEach(([, changed]) => changed('active'));
+    await stopped;
+  });
   expect(mockAddTranscript).toHaveBeenCalledTimes(1);
 });
 
@@ -518,4 +527,85 @@ test('Whisper uses native capture and recent drafts but saves the authoritative 
   expect(onComplete).toHaveBeenCalledWith('Full Whisper recording.');
   expect(transcribeAndCleanup).not.toHaveBeenCalled();
   expect(mockRecorder.record).not.toHaveBeenCalled();
+});
+
+test('background-enabled live dictation requests notification access and survives Home', async () => {
+  const listener = jest.mocked(AppState.addEventListener);
+  const { result } = renderHook(() =>
+    useAudioRecording({ liveTranscription: true, allowsBackgroundRecording: true }),
+  );
+  await act(async () => {
+    await result.current.startRecording();
+  });
+  expect(mockAudioModule.requestNotificationPermissionsAsync).toHaveBeenCalledTimes(1);
+  expect(AndroidSpeech.startLive).toHaveBeenCalledWith('live-session', 'basic', 'en-US', true);
+  const changed = listener.mock.calls.find(([event]) => event === 'change')?.[1];
+  await act(async () => {
+    changed?.('background');
+  });
+  expect(AndroidSpeech.cancelLive).not.toHaveBeenCalled();
+  expect(result.current.isRecording).toBe(true);
+  act(() => {
+    mockListener?.({ type: 'preview-paused', sessionId: 'live-session' });
+  });
+  expect(result.current.livePreviewPaused).toBe(true);
+  expect(result.current.currentText).toBe('');
+});
+
+test('an old native build cannot pretend to provide background live recording', async () => {
+  jest.mocked(AndroidSpeech.isBackgroundRecordingAvailable).mockReturnValue(false);
+  const { result } = renderHook(() =>
+    useAudioRecording({ liveTranscription: true, allowsBackgroundRecording: true }),
+  );
+  await act(async () => {
+    await expect(result.current.startRecording()).rejects.toThrow(
+      'Background speech recording needs the updated Android app',
+    );
+  });
+  expect(AndroidSpeech.startLive).not.toHaveBeenCalled();
+  expect(mockRecorder.record).not.toHaveBeenCalled();
+});
+
+test('a committed stop can resume its foreground wait after the recording screen unmounts', async () => {
+  let resolveStop:
+    | ((value: Awaited<ReturnType<typeof AndroidSpeech.stopLive>>) => void)
+    | undefined;
+  jest.mocked(AndroidSpeech.stopLive).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        resolveStop = resolve;
+      }),
+  );
+  const listener = jest.mocked(AppState.addEventListener);
+  const { result, unmount } = renderHook(() => useAudioRecording({ liveTranscription: true }));
+  await act(async () => {
+    await result.current.startRecording();
+  });
+  let stopping: Promise<void> | undefined;
+  act(() => {
+    stopping = result.current.stopRecording();
+  });
+  const primary = listener.mock.calls.find(([event]) => event === 'change')?.[1];
+  act(() => {
+    primary?.('background');
+  });
+  unmount();
+  await act(async () => {
+    resolveStop?.({
+      text: 'Saved after return.',
+      fileUri: 'file:///committed.wav',
+      durationMs: 1000,
+    });
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  });
+  expect(mockAddTranscript).not.toHaveBeenCalled();
+  const waiting = listener.mock.calls.filter(([event]) => event === 'change').at(-1)?.[1];
+  expect(waiting).not.toBe(primary);
+  await act(async () => {
+    waiting?.('active');
+    await stopping;
+  });
+  expect(mockAddTranscript).toHaveBeenCalledWith(
+    expect.objectContaining({ text: 'Saved after return.' }),
+  );
 });

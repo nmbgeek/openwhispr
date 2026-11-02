@@ -260,11 +260,7 @@ export default function FoldersScreen() {
         icon="plus"
         mdIcon="Plus"
         accessibilityLabel="Create"
-        actions={
-          Platform.OS === 'ios'
-            ? FAB_ACTIONS
-            : FAB_ACTIONS.filter((action) => action.id !== 'meeting')
-        }
+        actions={FAB_ACTIONS}
         onActionPress={handleFabAction}
       />
 

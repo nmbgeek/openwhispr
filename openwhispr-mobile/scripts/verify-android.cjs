@@ -37,6 +37,25 @@ for (const permission of ['RECORD_AUDIO', 'FOREGROUND_SERVICE', 'FOREGROUND_SERV
   assert.match(manifest, new RegExp(`android.permission.${permission}"`));
 }
 assert.match(manifest, /AudioRecordingService[^>]*android:foregroundServiceType="microphone"/);
+// Local speech owns its own service; Expo Audio's service protects only Expo recorders.
+function verifyLocalRecordingService(xml) {
+  assert.match(xml, /android.permission.WAKE_LOCK"/);
+  assert.match(xml, /android.permission.POST_NOTIFICATIONS"/);
+  const service = xml.match(
+    /<service\b[^>]*android:name="[^"]*MicrophoneRecordingService"[^>]*>/,
+  )?.[0];
+  assert.ok(service, 'Local speech microphone service must be declared');
+  assert.match(service, /android:foregroundServiceType="microphone"/);
+  assert.match(service, /android:exported="false"/);
+  assert.match(service, /android:stopWithTask="true"/);
+}
+verifyLocalRecordingService(
+  fs.readFileSync(
+    path.join(projectRoot, 'modules/android-speech/android/src/main/AndroidManifest.xml'),
+    'utf8',
+  ),
+);
+
 const gradleProperties = fs.readFileSync(
   path.join(projectRoot, 'android/gradle.properties'),
   'utf8',
@@ -98,5 +117,16 @@ if (process.argv.includes('--build')) {
     ],
     { cwd: path.join(projectRoot, 'android') },
   );
-  console.log('Debug APK: android/app/build/outputs/apk/debug/app-debug.apk');
+  verifyLocalRecordingService(
+    fs.readFileSync(
+      path.join(
+        projectRoot,
+        'android/app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml',
+      ),
+      'utf8',
+    ),
+  );
+  console.log(
+    'Debug APK and merged microphone service verified: android/app/build/outputs/apk/debug/app-debug.apk',
+  );
 }

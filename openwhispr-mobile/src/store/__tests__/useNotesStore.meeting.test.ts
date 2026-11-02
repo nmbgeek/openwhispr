@@ -1,5 +1,8 @@
 jest.mock('expo-file-system/legacy', () => ({ documentDirectory: 'file:///app/documents/' }));
 const mockProcessMeeting = jest.fn();
+jest.mock('@/lib/meetingRecovery', () => ({ waitForAppActive: jest.fn(async () => undefined) }));
+jest.mock('@/lib/inferenceRouting', () => ({ getPickedLocalModel: jest.fn(() => 'whisper-base') }));
+jest.mock('@/lib/localSpeechModels', () => ({ mlKitLocale: jest.fn(() => 'en-US') }));
 const mockGetDiarizer = jest.fn();
 const mockLocalTranscribe = jest.fn();
 const mockGenerateNoteTitle = jest.fn();
@@ -1498,4 +1501,96 @@ it('retains remote deletion retry identifiers when making a note private fails o
   await expect(useNotesStore.getState().setNotePrivacy(1, true)).rejects.toThrow('offline');
   expect(notesRepository.clearNoteRemoteId).not.toHaveBeenCalled();
   expect(notesRepository.clearNoteClientId).not.toHaveBeenCalled();
+});
+
+describe('Android flat meeting pipeline', () => {
+  const originalOS = require('react-native').Platform.OS;
+  beforeEach(() => {
+    Object.defineProperty(require('react-native').Platform, 'OS', {
+      value: 'android',
+      configurable: true,
+    });
+    (notesRepository.getNoteById as jest.Mock).mockReturnValue({
+      id: 7,
+      noteType: 'meeting',
+      content: 'Typed decisions',
+      audioDurationSeconds: 12,
+    });
+    (notesRepository.getTranscriptionStatus as jest.Mock).mockReturnValue('transcribing');
+  });
+  afterEach(() =>
+    Object.defineProperty(require('react-native').Platform, 'OS', {
+      value: originalOS,
+      configurable: true,
+    }),
+  );
+
+  it('uses the captured local engine and locale on real M4A, without diarization or cloud summaries', async () => {
+    mockLocalTranscribe.mockResolvedValue({ text: ' Meeting transcript ', provider: 'local' });
+    mockAuthState.user = signedInUser;
+    await useNotesStore
+      .getState()
+      .runMeetingPipeline(7, 'file:///app/documents/meeting-7.m4a', undefined, {
+        model: 'mlkit-basic',
+        language: 'fr',
+        locale: 'fr-FR',
+        durationSeconds: 9,
+      });
+    expect(mockLocalTranscribe).toHaveBeenCalledWith('file:///app/documents/meeting-7.m4a', {
+      model: 'mlkit-basic',
+      language: 'fr',
+      locale: 'fr-FR',
+    });
+    expect(notesRepository.replaceSegments).toHaveBeenCalledWith(7, [
+      {
+        noteId: 7,
+        text: 'Meeting transcript',
+        startMs: 0,
+        endMs: 9000,
+        speakerLabel: null,
+        sortOrder: 0,
+      },
+    ]);
+    expect(notesRepository.updateNoteMeta).toHaveBeenCalledWith(7, {
+      sourceFile: 'file:///app/documents/meeting-7.m4a',
+      diarizationEnabled: 0,
+    });
+    expect(mockGetDiarizer).not.toHaveBeenCalled();
+    expect(mockProcessMeeting).not.toHaveBeenCalled();
+    expect(ReasoningService.processText).not.toHaveBeenCalled();
+    expect(generateLocalMeetingNotes).not.toHaveBeenCalled();
+  });
+
+  it('preserves the source and marks failed when local recognition fails', async () => {
+    mockLocalTranscribe.mockRejectedValue(new Error('local engine failed'));
+    await expect(
+      useNotesStore
+        .getState()
+        .runMeetingPipeline(7, 'file:///app/documents/meeting-7.m4a', undefined, {
+          model: 'whisper-base',
+          language: 'auto',
+        }),
+    ).rejects.toThrow('local engine failed');
+    expect(notesRepository.setTranscriptionStatus).toHaveBeenCalledWith(7, 'failed');
+    expect(notesRepository.replaceSegments).not.toHaveBeenCalled();
+    expect(notesRepository.updateNoteMeta).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ sourceFile: 'file:///app/documents/meeting-7.m4a' }),
+    );
+  });
+
+  it('retries the retained M4A through the same local pipeline', async () => {
+    (notesRepository.getNoteById as jest.Mock).mockReturnValue({
+      id: 7,
+      noteType: 'meeting',
+      sourceFile: 'file:///app/documents/meeting-7.m4a',
+    });
+    mockLocalTranscribe.mockResolvedValue({ text: 'Recovered full meeting', provider: 'local' });
+    await useNotesStore.getState().retryMeetingTranscription(7);
+    expect(mockLocalTranscribe).toHaveBeenCalledWith(
+      'file:///app/documents/meeting-7.m4a',
+      expect.objectContaining({ model: 'whisper-base' }),
+    );
+    expect(notesRepository.setTranscriptionStatus).toHaveBeenCalledWith(7, 'done');
+  });
 });

@@ -34,7 +34,9 @@ export function isManagedTranscriptAudioUri(uri?: string | null): boolean {
 /** source_file is synced metadata, not authority to read or delete a local path. */
 export function isManagedMeetingAudioUri(noteId: number, uri?: string | null): boolean {
   return (
-    !!FileSystem.documentDirectory && uri === `${FileSystem.documentDirectory}meeting-${noteId}.wav`
+    !!FileSystem.documentDirectory &&
+    (uri === `${FileSystem.documentDirectory}meeting-${noteId}.wav` ||
+      uri === `${FileSystem.documentDirectory}meeting-${noteId}.m4a`)
   );
 }
 

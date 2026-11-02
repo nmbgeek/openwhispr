@@ -178,3 +178,34 @@ test('preview failure is nonfatal to the retained recording and final transcript
     text: 'Complete recording.',
   });
 });
+
+test('pause discards old audio, suppresses stale drafts and resumes once with fresh PCM', async () => {
+  const old = deferred<string>();
+  mockPcm.mockReturnValueOnce(old.promise);
+  const onText = jest.fn();
+  const session = await WhisperLivePreview.prepare({}, { onText });
+  session.pushPcm(pcmSecond);
+  await jest.advanceTimersByTimeAsync(0);
+  const signal = mockPcm.mock.calls[0]?.[1]?.signal;
+  session.pause();
+  expect(signal?.aborted).toBe(true);
+  session.pushPcm(pcmSecond);
+  session.resume();
+  const fresh = Buffer.alloc(32000, 9).toString('base64');
+  session.pushPcm(fresh);
+  session.resume(); // duplicate foreground/native reset must not drop the fresh tail
+  await jest.advanceTimersByTimeAsync(5000);
+  expect(mockPcm).toHaveBeenCalledTimes(1);
+  old.resolve('Stale draft');
+  await jest.advanceTimersByTimeAsync(0);
+  expect(onText).not.toHaveBeenCalledWith('Stale draft');
+  expect(mockPcm).toHaveBeenCalledTimes(2);
+  expect(Buffer.from(mockPcm.mock.calls[1]?.[0] ?? new ArrayBuffer(0))).toEqual(
+    Buffer.alloc(32000, 9),
+  );
+  session.pause();
+  await expect(session.finish('file:///whole.wav')).resolves.toMatchObject({
+    text: 'Complete recording.',
+  });
+  expect(mockFile).toHaveBeenCalledTimes(1);
+});

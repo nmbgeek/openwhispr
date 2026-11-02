@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import {
   AndroidSpeech,
   type AndroidLiveSpeechEvent,
@@ -14,22 +15,79 @@ export interface AndroidLiveRecorder {
   cancel(): Promise<void>;
 }
 
+function waitForForeground(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.reject(new Error('Recording was cancelled.'));
+  if (AppState.currentState !== 'background' && AppState.currentState !== 'inactive')
+    return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      subscription.remove();
+      signal.removeEventListener('abort', abort);
+    };
+    const abort = () => {
+      cleanup();
+      reject(new Error('Recording was cancelled.'));
+    };
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        cleanup();
+        resolve();
+      }
+    });
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+
 export function createAndroidLiveRecorder(
   sessionId: string,
   model: AndroidLiveModel,
   language: string,
+  allowsBackgroundRecording = false,
 ): AndroidLiveRecorder {
   if (model !== 'whisper-base') {
+    const abort = new AbortController();
+    let finalizing = false;
     return {
       addListener: (listener) => AndroidSpeech.addLiveListener(listener),
-      start: () => AndroidSpeech.startLive(sessionId, mlKitMode(model), language),
-      stop: () => AndroidSpeech.stopLive(sessionId),
-      cancel: () => AndroidSpeech.cancelLive(sessionId),
+      start: () =>
+        allowsBackgroundRecording
+          ? AndroidSpeech.startLive(sessionId, mlKitMode(model), language, true)
+          : AndroidSpeech.startLive(sessionId, mlKitMode(model), language),
+      async stop() {
+        const result = await AndroidSpeech.stopLive(sessionId);
+        if (!result.requiresFinalTranscription || result.error) return result;
+        try {
+          await waitForForeground(abort.signal);
+          finalizing = true;
+          const final = await AndroidSpeech.transcribe(result.fileUri, mlKitMode(model), language);
+          if (abort.signal.aborted) throw new Error('Recording was cancelled.');
+          return { ...result, text: final.text };
+        } catch (error: unknown) {
+          return {
+            ...result,
+            text: '',
+            error: {
+              code: 'MLKIT_TRANSCRIPTION',
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        } finally {
+          finalizing = false;
+        }
+      },
+      async cancel() {
+        abort.abort();
+        await AndroidSpeech.cancelLive(sessionId);
+        if (finalizing) await AndroidSpeech.cancel();
+      },
     };
   }
   const { WhisperLivePreview } =
     require('./WhisperLivePreview') as typeof import('./WhisperLivePreview');
   let cancelled = false;
+  const abort = new AbortController();
+  let appStateSubscription: { remove(): void } | null = null;
   let preview: WhisperLivePreview | null = null;
   let preparing: Promise<void> | null = null;
   let listener: ((event: AndroidLiveSpeechEvent) => void) | null = null;
@@ -37,6 +95,8 @@ export function createAndroidLiveRecorder(
   const detach = () => {
     subscription?.remove();
     subscription = null;
+    appStateSubscription?.remove();
+    appStateSubscription = null;
   };
   return {
     addListener(callback) {
@@ -66,13 +126,23 @@ export function createAndroidLiveRecorder(
           await preview.cancel();
           return;
         }
+        if (allowsBackgroundRecording) {
+          appStateSubscription = AppState.addEventListener('change', (state) => {
+            if (state === 'active') preview?.resume();
+            else preview?.pause();
+          });
+        }
         subscription = AndroidSpeech.addCaptureListener((event) => {
           if (event.sessionId !== sessionId || cancelled) return;
           if (event.type === 'audio') preview?.pushPcm(event.pcmBase64);
-          else listener?.(event);
+          else if (event.type === 'preview-reset') {
+            preview?.resume();
+            listener?.({ type: 'transcript', sessionId, text: '', isFinal: false });
+          } else listener?.(event);
         });
         try {
-          await AndroidSpeech.startCapture(sessionId);
+          if (allowsBackgroundRecording) await AndroidSpeech.startCapture(sessionId, true);
+          else await AndroidSpeech.startCapture(sessionId);
           if (cancelled) await AndroidSpeech.cancelCapture(sessionId);
         } catch (error) {
           detach();
@@ -90,6 +160,7 @@ export function createAndroidLiveRecorder(
           return { ...result, text: '' };
         }
         if (!preview) throw new Error('Whisper preview was not initialized.');
+        await waitForForeground(abort.signal);
         const final = await preview.finish(result.fileUri);
         return { ...result, text: final.text };
       } catch (error: unknown) {
@@ -105,6 +176,7 @@ export function createAndroidLiveRecorder(
     },
     async cancel() {
       cancelled = true;
+      abort.abort();
       detach();
       try {
         await AndroidSpeech.cancelCapture(sessionId);

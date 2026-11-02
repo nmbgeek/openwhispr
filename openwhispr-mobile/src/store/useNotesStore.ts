@@ -1,5 +1,6 @@
 import { isManagedMeetingAudioUri } from '@/lib/transcriptAudio';
 import { create } from 'zustand';
+import { AppState, Platform } from 'react-native';
 import * as Sentry from '@sentry/react-native';
 import { notesRepository, spacesRepository } from '@/data';
 import type { Note, Folder, NoteUpdate, Space } from '@/data';
@@ -13,8 +14,9 @@ import { deletePrivateNoteCloudCopy, queuePrivateNoteDeletion } from '@/sync/pri
 import { createSyncContext } from '@/sync/createSyncContext';
 import { getPreferredTranscriptionLanguage } from '@/lib/transcriptionLanguage';
 import type { TranscriptionStatus } from '@/types';
+import type { LocalSpeechModelKey } from '@/lib/localSpeechModels';
 import type { RealtimeUtterance } from '@/services/transcription/realtimeEvents';
-import { assertTransition } from '@/lib/diarization/transcriptionStatus';
+import { assertTransition, canTransition } from '@/lib/diarization/transcriptionStatus';
 import { formatTranscriptForExport } from '@/lib/diarization/transcriptDisplay';
 import { buildMergeTargetPatch, buildRenameSpeakerPatch } from '@/lib/diarization/speakerEdits';
 import {
@@ -152,6 +154,8 @@ const DEFAULT_FOLDER_ID = 1;
 const MEETINGS_FOLDER_NAME = 'meetings';
 
 export type CreateMeetingNoteContext = {
+  /** Force a device-private meeting without changing the app's dictation mode. */
+  isPrivate?: boolean;
   expectedSpeakerCount?: number;
   calendarEventId?: string | null;
   title?: string | null;
@@ -180,6 +184,7 @@ const resolveMeetingFolderId = (folders: Folder[]): number => {
  */
 const createMeetingNoteRow = (title: string, context: CreateMeetingNoteContext): Note => {
   const canFileInTeamSpace = (spaceId: number | null): boolean =>
+    context.isPrivate !== true &&
     useProcessingModeStore.getState().activeMode !== 'private' &&
     spacesRepository.listSpaces().some(({ id, kind }) => id === spaceId && kind === 'team');
   if (context.folderId != null) {
@@ -347,11 +352,11 @@ const autoGenerateMeetingNotes = async (noteId: number): Promise<void> => {
 
 // Shared finalization tail for both meeting paths (local runMeetingPipeline and cloud
 // finalizeCloudMeeting): auto-title from the transcript, then the AI summary/cleanup pass.
-const finalizeMeetingNoteContent = async (noteId: number): Promise<void> => {
+const finalizeMeetingNoteContent = async (noteId: number, localOnly = false): Promise<void> => {
   const currentNote = notesRepository.getNoteById(noteId);
   if (!currentNote || currentNote.deletedAt || currentNote.noteType !== 'meeting') return;
 
-  const canUseCloud = canUseCloudForMeetingNote(currentNote);
+  const canUseCloud = !localOnly && canUseCloudForMeetingNote(currentNote);
 
   // Auto-title from the transcript, matching the action path and the "Auto-generate Note
   // Titles" setting. A selected calendar title is durable until the user clears it back to
@@ -373,7 +378,7 @@ const finalizeMeetingNoteContent = async (noteId: number): Promise<void> => {
         const { deriveLocalTitle, generateNoteTitle } =
           require('@/utils/generateTitle') as typeof import('@/utils/generateTitle');
         const routing = { isPrivateNote: currentNote.isPrivate === 1 };
-        const canUseLocalTitle = await shouldUseLocalReasoning(routing);
+        const canUseLocalTitle = !localOnly && (await shouldUseLocalReasoning(routing));
         const generatedTitle =
           canUseCloud || canUseLocalTitle
             ? await generateNoteTitle(transcriptText, {
@@ -386,10 +391,18 @@ const finalizeMeetingNoteContent = async (noteId: number): Promise<void> => {
       }
     }
   }
-  await autoGenerateMeetingNotes(noteId).catch((error) => {
-    Sentry.captureException(error, { tags: { feature: 'meeting-auto-notes' } });
-  });
+  if (!localOnly)
+    await autoGenerateMeetingNotes(noteId).catch((error) => {
+      Sentry.captureException(error, { tags: { feature: 'meeting-auto-notes' } });
+    });
 };
+
+export interface MeetingSpeechOptions {
+  model?: LocalSpeechModelKey;
+  language?: string;
+  locale?: string;
+  durationSeconds?: number;
+}
 
 interface NotesStore {
   /** Private-space folders only (see NotesRepository.getPrivateFolders) — every UI folder surface
@@ -449,7 +462,13 @@ interface NotesStore {
     noteId: number,
     wavUri: string,
     expectedSpeakerCount?: number,
+    speech?: MeetingSpeechOptions,
   ) => Promise<void>;
+  retainMeetingRecording: (
+    noteId: number,
+    sourceUri: string,
+    durationSeconds?: number,
+  ) => Promise<string>;
   retryMeetingTranscription: (noteId: number) => Promise<void>;
   finalizeCloudMeeting: (
     noteId: number,
@@ -746,7 +765,7 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
       });
     }
     get().transitionStatus(note.id, 'recording'); // idle -> recording via the guarded boundary
-    if (useProcessingModeStore.getState().activeMode === 'private') {
+    if (context.isPrivate || useProcessingModeStore.getState().activeMode === 'private') {
       notesRepository.setNotePrivacy(note.id, true);
     }
     get().loadNotes();
@@ -761,7 +780,78 @@ export const useNotesStore = create<NotesStore>((set, get) => ({
     get().loadNotes();
   },
 
-  runMeetingPipeline: async (noteId, wavUri, expectedSpeakerCount) => {
+  retainMeetingRecording: async (noteId, sourceUri, durationSeconds) => {
+    const note = notesRepository.getNoteById(noteId);
+    if (!note || note.deletedAt || note.noteType !== 'meeting')
+      throw new Error('Meeting note not found.');
+    const { retainMeetingRecording } =
+      require('@/lib/meetingRecording') as typeof import('@/lib/meetingRecording');
+    const retained = await retainMeetingRecording(noteId, sourceUri);
+    notesRepository.updateNoteMeta(noteId, {
+      sourceFile: retained,
+      ...(durationSeconds == null ? {} : { audioDurationSeconds: durationSeconds }),
+    });
+    get().loadNotes();
+    return retained;
+  },
+
+  runMeetingPipeline: async (noteId, wavUri, expectedSpeakerCount, speech) => {
+    if (Platform.OS === 'android') {
+      const note = notesRepository.getNoteById(noteId);
+      if (!note || note.deletedAt || note.noteType !== 'meeting')
+        throw new Error('Meeting note not found.');
+      const { getPickedLocalModel } =
+        require('@/lib/inferenceRouting') as typeof import('@/lib/inferenceRouting');
+      const { mlKitLocale } =
+        require('@/lib/localSpeechModels') as typeof import('@/lib/localSpeechModels');
+      const selected = speech ?? {
+        model: getPickedLocalModel('dictation'),
+        language: getPreferredTranscriptionLanguage() ?? 'auto',
+        locale: mlKitLocale(useConfigStore.getState().config) ?? undefined,
+      };
+      const LocalTranscriptionService = loadLocalTranscriptionService();
+      notesRepository.updateNoteMeta(noteId, { sourceFile: wavUri, diarizationEnabled: 0 });
+      try {
+        if (notesRepository.getTranscriptionStatus(noteId) !== 'transcribing')
+          get().transitionStatus(noteId, 'transcribing');
+        const { waitForAppActive } =
+          require('@/lib/meetingRecovery') as typeof import('@/lib/meetingRecovery');
+        await waitForAppActive(AppState);
+        const result = await LocalTranscriptionService.transcribe(wavUri, {
+          model: selected.model,
+          language: selected.language ?? 'auto',
+          locale: selected.locale,
+        });
+        if (!result.text.trim())
+          throw new Error('No speech was recognized. The recording is saved so you can retry.');
+        const current = notesRepository.getNoteById(noteId);
+        if (!current || current.deletedAt) return;
+        const seconds = selected.durationSeconds ?? current.audioDurationSeconds ?? 0;
+        notesRepository.replaceSegments(noteId, [
+          {
+            noteId,
+            text: result.text.trim(),
+            startMs: 0,
+            endMs: Math.max(0, seconds) * 1000,
+            speakerLabel: null,
+            sortOrder: 0,
+          },
+        ]);
+        get().transitionStatus(noteId, 'done');
+        logTranscriptionCompleted({ source: 'meeting', provider: 'local' });
+        await finalizeMeetingNoteContent(noteId, true);
+      } catch (error) {
+        if (
+          notesRepository.getNoteById(noteId) &&
+          canTransition(notesRepository.getTranscriptionStatus(noteId), 'failed')
+        )
+          get().transitionStatus(noteId, 'failed');
+        throw error;
+      } finally {
+        get().loadNotes();
+      }
+      return;
+    }
     const { processMeeting, getDiarizer, LocalTranscriptionService } = loadMeetingPipelineDeps();
     notesRepository.updateNoteMeta(noteId, { sourceFile: wavUri });
     try {

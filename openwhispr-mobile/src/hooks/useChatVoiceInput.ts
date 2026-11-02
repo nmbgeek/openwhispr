@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert } from 'react-native';
+import { AccessibilityInfo, Alert, Platform } from 'react-native';
 import type { AudioRecorder } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
 import { useAudioRecording } from '@/hooks/useAudioRecording';
@@ -199,6 +199,7 @@ export function useChatVoiceInput({
   };
 
   const recording = useAudioRecording({
+    allowsBackgroundRecording: Platform.OS === 'android',
     saveToHistory: false,
     // A spoken question goes to the chat as it was said: dictation cleanup would rewrite it, and in
     // Local Mode its Cloud default would take it off this iPhone on a route the chat never offered.

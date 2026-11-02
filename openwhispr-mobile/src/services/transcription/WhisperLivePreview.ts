@@ -24,6 +24,7 @@ export class WhisperLivePreview {
   private dirty = false;
   private closed = false;
   private cancelled = false;
+  private paused = false;
   private nextPreviewAt = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private inFlight: Promise<void> | null = null;
@@ -48,7 +49,7 @@ export class WhisperLivePreview {
   }
 
   pushPcm(pcmBase64: string): void {
-    if (this.closed || !pcmBase64) return;
+    if (this.closed || this.paused || !pcmBase64) return;
     // Cap even an oversized event before decoding, then keep sample-aligned tail bytes.
     const padding = pcmBase64.endsWith('==') ? 2 : pcmBase64.endsWith('=') ? 1 : 0;
     const sourceBytes = (pcmBase64.length / 4) * 3 - padding;
@@ -70,9 +71,29 @@ export class WhisperLivePreview {
     this.schedule();
   }
 
+  /** Discard draft audio across background gaps; the native WAV remains complete. */
+  pause(): void {
+    if (this.closed || this.paused) return;
+    this.paused = true;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.timer = null;
+    this.dirty = false;
+    this.byteLength = 0;
+    this.writeAt = 0;
+    this.nextPreviewAt = 0;
+    this.previewAbort?.abort();
+  }
+
+  resume(): void {
+    if (this.closed || !this.paused) return;
+    this.paused = false;
+    this.schedule();
+  }
+
   private schedule(): void {
     if (
       this.closed ||
+      this.paused ||
       this.inFlight ||
       this.timer !== null ||
       !this.dirty ||
@@ -100,7 +121,7 @@ export class WhisperLivePreview {
   }
 
   private decodeTail(): void {
-    if (this.closed || this.inFlight || !this.dirty) return;
+    if (this.closed || this.paused || this.inFlight || !this.dirty) return;
     const pcm = this.snapshot();
     this.dirty = false;
     this.nextPreviewAt = Date.now() + PREVIEW_INTERVAL_MS;

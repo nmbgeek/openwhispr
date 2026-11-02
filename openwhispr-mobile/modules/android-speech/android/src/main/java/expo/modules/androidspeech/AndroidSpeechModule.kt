@@ -24,6 +24,7 @@ import java.io.File
 import java.util.IllformedLocaleException
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CancellationException
@@ -51,16 +52,19 @@ class AndroidSpeechModule : Module() {
   private val cancelledSessionIds = ConcurrentHashMap.newKeySet<String>()
   private val cancelledSessionOrder = ConcurrentLinkedQueue<String>()
   private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+  private val appForeground = AtomicBoolean(true)
+  private val visibilityLock = Any()
 
   override fun definition() = ModuleDefinition {
     Name("AndroidSpeech")
+    Constants("supportsBackgroundRecording" to true)
     Events("live-speech", "capture-audio")
 
-    AsyncFunction("startLive") Coroutine { sessionId: String, mode: String, locale: String ->
+    AsyncFunction("startLive") Coroutine { sessionId: String, mode: String, locale: String, allowsBackgroundRecording: Boolean? ->
       startSession(sessionId) { lifetime ->
         val client = createRecognizer(mode, locale)
         try {
-          AndroidLiveSpeechSession(sessionId, context(), client, lifetime) { event ->
+          AndroidLiveSpeechSession(sessionId, context(), client, lifetime, allowsBackgroundRecording == true) { event ->
             sendEvent("live-speech", event)
           }
         } catch (error: Throwable) {
@@ -82,9 +86,9 @@ class AndroidSpeechModule : Module() {
       if (session != null) cancelSession(session)
     }
 
-    AsyncFunction("startCapture") Coroutine { sessionId: String ->
+    AsyncFunction("startCapture") Coroutine { sessionId: String, allowsBackgroundRecording: Boolean? ->
       startSession(sessionId) { lifetime ->
-        AndroidAudioCaptureSession(sessionId, context(), lifetime, emitPcmToJs = true, emit = { event ->
+        AndroidAudioCaptureSession(sessionId, context(), lifetime, allowsBackgroundRecording = allowsBackgroundRecording == true, emitPcmToJs = true, emit = { event ->
           sendEvent("capture-audio", event)
         })
       }
@@ -234,6 +238,24 @@ class AndroidSpeechModule : Module() {
       }
     }
 
+    OnActivityEntersBackground {
+      val session = synchronized(visibilityLock) {
+        appForeground.set(false)
+        activeSession.get()?.also { it.setAppForeground(false) }
+      }
+      if (session != null && !session.allowsBackgroundRecording) {
+        rememberCancelledSession(session.id)
+        cleanupScope.launch { cancelSession(session) }
+      }
+    }
+
+    OnActivityEntersForeground {
+      synchronized(visibilityLock) {
+        appForeground.set(true)
+        activeSession.get()?.setAppForeground(true)
+      }
+    }
+
     OnDestroy {
       activeOperation.get()?.cancel()
       val session = activeSession.getAndSet(null)
@@ -261,7 +283,10 @@ class AndroidSpeechModule : Module() {
     try {
       val created = factory(lifetime)
       session = created
-      activeSession.set(created)
+      synchronized(visibilityLock) {
+        activeSession.set(created)
+        created.setAppForeground(appForeground.get())
+      }
       if (cancelledSessionIds.contains(sessionId)) {
         throw speechError("CANCELLED", "This recording session was already cancelled.")
       }

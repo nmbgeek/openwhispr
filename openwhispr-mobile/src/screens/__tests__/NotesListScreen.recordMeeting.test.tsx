@@ -93,13 +93,13 @@ beforeEach(() => {
 });
 
 describe('NotesListScreen Record meeting', () => {
-  it('keeps native-only meetings out of the Android create menu', () => {
+  it('offers background meeting recording in the Android create menu', () => {
     const originalOS = Platform.OS;
     Object.defineProperty(Platform, 'OS', { value: 'android', configurable: true });
     try {
       mockParams = {};
       render(<NotesListScreen />);
-      expect(mockFabActions.map((action) => action.id)).toEqual(['note']);
+      expect(mockFabActions.map((action) => action.id)).toEqual(['note', 'meeting']);
     } finally {
       Object.defineProperty(Platform, 'OS', { value: originalOS, configurable: true });
     }

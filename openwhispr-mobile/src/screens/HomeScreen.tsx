@@ -173,6 +173,7 @@ export default function HomeScreen() {
     currentText,
     isLiveTranscription,
     livePreviewIsRecent,
+    livePreviewPaused,
     liveLevel,
     startRecording,
     stopRecording,
@@ -180,6 +181,7 @@ export default function HomeScreen() {
     audioRecorder,
   } = useAudioRecording({
     liveTranscription: true,
+    allowsBackgroundRecording: Platform.OS === 'android',
     onComplete: (text) => {
       Clipboard.setStringAsync(text);
       showCopied();
@@ -747,6 +749,7 @@ export default function HomeScreen() {
         waveformData={isLiveTranscription ? [] : waveformData}
         liveTranscript={isLiveTranscription ? currentText : undefined}
         livePreviewIsRecent={livePreviewIsRecent}
+        livePreviewPaused={livePreviewPaused}
         durationSeconds={recordingDuration}
         onDone={handleRecordPress}
         onDiscard={cancelRecording}

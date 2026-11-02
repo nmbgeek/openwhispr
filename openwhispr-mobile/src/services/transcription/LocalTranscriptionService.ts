@@ -33,6 +33,8 @@ function configuredMlKitLocale(): string | null {
 }
 
 export interface LocalTranscribeOptions {
+  /** Explicit native locale captured when a long recording starts. */
+  locale?: string;
   /** Single-language hint for the Whisper branch (today's behavior, passed through verbatim). */
   language?: string;
   wordTimestamps?: boolean;
@@ -119,7 +121,7 @@ export class LocalTranscriptionService {
   ): Promise<TranscriptionResponse> {
     if (isMlKitModelKey(options.model)) {
       const model = options.model;
-      const locale = configuredMlKitLocale();
+      const locale = options.locale ?? configuredMlKitLocale();
       if (Platform.OS !== 'android' || !AndroidSpeech.isAvailable()) {
         throw new Error(`${ML_KIT_TITLES[model]} is only available in a native Android build.`);
       }

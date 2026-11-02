@@ -21,7 +21,10 @@ const STAY: ResumeDecision = { resetToHome: false, refreshUsage: false };
  * Each guard covers a flow that owns its own navigation and would be broken by
  * being bounced to Home mid-way.
  */
-export function resolveResumeAction(alreadyOnHome: boolean): ResumeDecision {
+export function resolveResumeAction(
+  alreadyOnHome: boolean,
+  options: { preserveCurrentScreen?: boolean } = {},
+): ResumeDecision {
   const handoff = useHandoffStore.getState();
   if (handoff.isActive || handoff.isCheckingInitialUrl) return STAY;
 
@@ -48,5 +51,5 @@ export function resolveResumeAction(alreadyOnHome: boolean): ResumeDecision {
   if (isAffiliateArrivalFresh()) return STAY;
 
   // Already on Home → skip the redundant replace that would slide Home over itself.
-  return { resetToHome: !alreadyOnHome, refreshUsage: false };
+  return { resetToHome: !alreadyOnHome && !options.preserveCurrentScreen, refreshUsage: false };
 }

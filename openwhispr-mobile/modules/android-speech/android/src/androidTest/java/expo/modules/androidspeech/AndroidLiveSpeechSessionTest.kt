@@ -168,7 +168,7 @@ class AndroidLiveSpeechSessionTest {
     try {
       val status = withTimeout(15_000L) { recognizer.checkStatus() }
       assumeTrue("Basic model is not already installed.", status == FeatureStatus.AVAILABLE)
-      return Fixture(AndroidLiveSpeechSession(UUID.randomUUID().toString(), context, recognizer, SupervisorJob(), emit), recognizer)
+      return Fixture(AndroidLiveSpeechSession(UUID.randomUUID().toString(), context, recognizer, SupervisorJob(), emit = emit), recognizer)
     } catch (error: Throwable) {
       recognizer.close()
       throw error

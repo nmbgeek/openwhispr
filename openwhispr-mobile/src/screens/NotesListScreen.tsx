@@ -163,9 +163,7 @@ export default function NotesListScreen() {
     const actions: FabAction[] = [
       { id: 'note', label: 'New note', icon: 'square.and.pencil', mdIcon: 'SquarePen' },
     ];
-    if (Platform.OS === 'ios') {
-      actions.push({ id: 'meeting', label: 'Record meeting', icon: 'mic', mdIcon: 'Mic' });
-    }
+    actions.push({ id: 'meeting', label: 'Record meeting', icon: 'mic', mdIcon: 'Mic' });
     if (spaceId != null) {
       actions.push({
         id: 'folder',

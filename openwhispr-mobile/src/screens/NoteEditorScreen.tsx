@@ -755,10 +755,12 @@ export default function NoteEditorScreen({
     currentText,
     isLiveTranscription,
     livePreviewIsRecent,
+    livePreviewPaused,
     startRecording,
     stopRecording,
   } = useAudioRecording({
     liveTranscription: true,
+    allowsBackgroundRecording: Platform.OS === 'android',
     onComplete: handleDictationComplete,
     onError: handleDictationError,
     // A declined cloud retry keeps the recording, which the failed history row holds for a retry.
@@ -1419,7 +1421,7 @@ export default function NoteEditorScreen({
           {isRecording && (currentText || isLiveTranscription) ? (
             <Text accessibilityLiveRegion="polite" className="mb-2 text-[15px] text-link">
               {isLiveTranscription
-                ? `${livePreviewIsRecent ? 'Recent preview' : 'Live'} · ${currentText || 'Listening…'}`
+                ? `${livePreviewPaused ? 'Recording · Transcript after Done' : livePreviewIsRecent ? 'Recent preview' : 'Live'} · ${currentText || (livePreviewPaused ? 'Recording continues…' : 'Listening…')}`
                 : currentText}
             </Text>
           ) : null}

@@ -103,3 +103,19 @@ describe('resolveResumeAction', () => {
     expect(resolveResumeAction(false).refreshUsage).toBe(false);
   });
 });
+
+test('Android preserves the recording or editor screen on warm resume', () => {
+  setStores();
+  expect(resolveResumeAction(false, { preserveCurrentScreen: true })).toEqual({
+    resetToHome: false,
+    refreshUsage: false,
+  });
+});
+
+test('preserving Android navigation still refreshes billing after an external portal visit', () => {
+  setStores({ billingActive: true });
+  expect(resolveResumeAction(false, { preserveCurrentScreen: true })).toEqual({
+    resetToHome: false,
+    refreshUsage: true,
+  });
+});

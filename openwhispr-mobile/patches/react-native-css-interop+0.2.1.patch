@@ -1,0 +1,36 @@
+diff --git a/node_modules/react-native-css-interop/src/metro/index.ts b/node_modules/react-native-css-interop/src/metro/index.ts
+--- a/node_modules/react-native-css-interop/src/metro/index.ts
++++ b/node_modules/react-native-css-interop/src/metro/index.ts
+@@ -342,6 +342,14 @@
+ 
+         debug(`virtualStyles.emit ${platform}`);
+         haste.emit("change", {
++          // Metro 0.83 consumes canonical paths and change maps, not eventsQueue.
++          rootDir: path.dirname(filePath),
++          logger: null,
++          changes: {
++            addedFiles: new Map(),
++            modifiedFiles: new Map([[path.basename(filePath), { isSymlink: false, modifiedTime: Date.now() }]]),
++            removedFiles: new Map(),
++          },
+           eventsQueue: [
+             {
+               filePath,
+diff --git a/node_modules/react-native-css-interop/dist/metro/index.js b/node_modules/react-native-css-interop/dist/metro/index.js
+--- a/node_modules/react-native-css-interop/dist/metro/index.js
++++ b/node_modules/react-native-css-interop/dist/metro/index.js
+@@ -177,6 +177,14 @@
+                 : getNativeJS((0, css_to_rn_1.cssToReactNativeRuntime)(css, options), debug)));
+             debug(`virtualStyles.emit ${platform}`);
+             haste.emit("change", {
++                // Metro 0.83 consumes canonical paths and change maps, not eventsQueue.
++                rootDir: path_1.default.dirname(filePath),
++                logger: null,
++                changes: {
++                  addedFiles: new Map(),
++                  modifiedFiles: new Map([[path_1.default.basename(filePath), { isSymlink: false, modifiedTime: Date.now() }]]),
++                  removedFiles: new Map(),
++                },
+                 eventsQueue: [
+                     {
+                         filePath,

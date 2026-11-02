@@ -28,6 +28,7 @@ type RecordingOverlayProps = {
   // Undefined keeps the batch recorder UI; an empty string means live speech is listening.
   liveTranscript?: string;
   livePreviewIsRecent?: boolean;
+  livePreviewPaused?: boolean;
   onDone: () => void;
   onDiscard: () => void;
 };
@@ -94,6 +95,7 @@ function OverlayContent({
   onDiscard,
   liveTranscript,
   livePreviewIsRecent,
+  livePreviewPaused,
 }: Omit<RecordingOverlayProps, 'visible'>) {
   const insets = useSafeAreaInsets();
   const scheme = useColorScheme();
@@ -158,13 +160,17 @@ function OverlayContent({
             testID="live-transcript"
           >
             <Text style={{ color: theme.timer, fontSize: 13, marginBottom: 12 }}>
-              {livePreviewIsRecent ? 'Recent preview · On-device' : 'Live · On-device'}
+              {livePreviewPaused
+                ? 'Recording · Transcript after Done'
+                : livePreviewIsRecent
+                  ? 'Recent preview · On-device'
+                  : 'Live · On-device'}
             </Text>
             <Text
               accessibilityLiveRegion="polite"
               style={{ color: theme.iconColor, fontSize: 24, lineHeight: 34 }}
             >
-              {liveTranscript || 'Listening…'}
+              {liveTranscript || (livePreviewPaused ? 'Recording continues…' : 'Listening…')}
             </Text>
           </ScrollView>
         ) : null}

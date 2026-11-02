@@ -86,13 +86,13 @@ export async function recoverOrphanedMeetings(deps: MeetingRecoveryDeps): Promis
   }
 }
 
-const MEETING_RECORDING_FILE = /^meeting-(\d+)\.wav$/;
+const MEETING_RECORDING_FILE = /^meeting-(\d+)\.(?:wav|m4a)$/;
 
 export interface MeetingRecordingRepairDeps {
   /** File names in the directory meeting recordings are saved to. */
   listRecordingFiles(): Promise<string[]>;
   getNote(noteId: number): Note | null;
-  recordingUri(noteId: number): string;
+  recordingUri(noteId: number, fileName?: string): string;
   restorePath(noteId: number, uri: string): void;
   deleteFile(uri: string): void;
 }
@@ -108,7 +108,7 @@ export async function repairMeetingRecordings(deps: MeetingRecordingRepairDeps):
     const noteId = Number(MEETING_RECORDING_FILE.exec(name)?.[1]);
     if (!noteId) continue;
     const note = deps.getNote(noteId);
-    const uri = deps.recordingUri(noteId);
+    const uri = deps.recordingUri(noteId, name);
     if (!note) deps.deleteFile(uri);
     else if (note.noteType === 'meeting' && note.sourceFile == null) deps.restorePath(noteId, uri);
   }
@@ -164,7 +164,7 @@ export function startMeetingRecoveryOnce(): void {
     ? repairMeetingRecordings({
         listRecordingFiles: () => FileSystem.readDirectoryAsync(directory),
         getNote: (noteId) => notesRepository.getNoteById(noteId),
-        recordingUri: (noteId) => `${directory}meeting-${noteId}.wav`,
+        recordingUri: (noteId, fileName) => `${directory}${fileName ?? `meeting-${noteId}.wav`}`,
         restorePath: (noteId, uri) => notesRepository.restoreMeetingRecordingPath(noteId, uri),
         deleteFile: (uri) => {
           FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);

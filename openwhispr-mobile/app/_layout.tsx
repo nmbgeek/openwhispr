@@ -156,8 +156,8 @@ function RootLayout() {
     }
   }, [isInitialized, onboardingFinished, user, isGuest]);
 
-  // Returning to a still-in-memory app (background→foreground) should land on
-  // Home, not wherever it was suspended (e.g. the Account screen). Cold launches
+  // iOS warm resume lands on Home for its keyboard/dictation flow. Android
+  // preserves the current screen, including background recordings. Cold launches
   // go through app/index.tsx; warm resume never re-resolves "/", so it needs this
   // explicit reset. Tracking an actual 'background' first keeps transient
   // 'inactive' flickers (control center, notifications) from resetting it; those
@@ -185,7 +185,9 @@ function RootLayout() {
         // ATT can change in iOS Settings while the app is backgrounded. Reapply
         // that system decision before allowing any further attribution events.
         refreshAppsFlyerTrackingAuthorization().catch(reportAttError);
-        const { resetToHome, refreshUsage } = resolveResumeAction(homeRouteRef.current.onHome);
+        const { resetToHome, refreshUsage } = resolveResumeAction(homeRouteRef.current.onHome, {
+          preserveCurrentScreen: Platform.OS === 'android',
+        });
         if (refreshUsage) {
           const usageStore = useUsageStore.getState();
           usageStore.endBillingSession();
