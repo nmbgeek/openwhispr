@@ -11,6 +11,20 @@ export interface LocalModelInfo {
   path?: string;
 }
 
+export interface WhisperTranscribeOptions {
+  modelName?: string;
+  language?: string;
+  wordTimestamps?: boolean;
+  prompt?: string;
+  signal?: AbortSignal;
+  /** Only for WAV files produced by our native PCM16 mono 16 kHz capture. */
+  pcm16Wav?: boolean;
+}
+
+function cancelled(): Error {
+  return Object.assign(new Error('Whisper transcription cancelled.'), { name: 'AbortError' });
+}
+
 export class LocalWhisperService {
   private static whisperContext: WhisperContext | null = null;
   private static currentModel: string | null = null;
@@ -76,6 +90,66 @@ export class LocalWhisperService {
     await this.initializeModel(modelPath);
   }
 
+  private static async awaitTranscription(
+    task: ReturnType<WhisperContext['transcribeData']>,
+    signal?: AbortSignal,
+  ): Promise<Awaited<typeof task.promise>> {
+    let stopping: Promise<void> | undefined;
+    const abort = (): void => {
+      // The native abort targets the active context, even when supplied a job ID.
+      // Keep both promises inside the exclusive operation so a late abort cannot
+      // stop the next preview or final file transcription.
+      if (!stopping) {
+        stopping = Promise.resolve().then(() => task.stop());
+        stopping.catch(() => undefined);
+      }
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    try {
+      const result = await task.promise;
+      if (signal?.aborted || result.isAborted) throw cancelled();
+      return result;
+    } finally {
+      signal?.removeEventListener('abort', abort);
+      if (stopping) await stopping.catch(() => undefined);
+    }
+  }
+
+  /** Raw PCM16LE, mono 16 kHz. whisper.rn 0.6's JSI uses decodePcm16 for ArrayBuffer. */
+  static async transcribePcm(
+    pcm: ArrayBuffer,
+    options: { language?: string; prompt?: string; signal?: AbortSignal } = {},
+  ): Promise<string> {
+    if (options.signal?.aborted) throw cancelled();
+    if (!pcm.byteLength || pcm.byteLength % 2 !== 0) {
+      throw new Error('Whisper preview requires complete PCM16 samples.');
+    }
+    const model = (await this.getAvailableModels()).find(
+      (entry) => entry.name === 'base' && entry.downloaded,
+    );
+    if (!model?.path)
+      throw new Error('Model "base" is not available. Please download it first from Settings.');
+    const modelPath = model.path;
+    return this.runExclusive(async () => {
+      if (options.signal?.aborted) throw cancelled();
+      await this.ensureModelInitialized(modelPath);
+      if (options.signal?.aborted) throw cancelled();
+      if (!this.whisperContext) throw new Error('Failed to initialize Whisper context.');
+      const task = this.whisperContext.transcribeData(pcm, {
+        language: options.language ?? 'auto',
+        maxThreads: this.maxThreads,
+        translate: false,
+        temperature: 0,
+        beamSize: 1,
+        bestOf: 1,
+        ...(options.prompt ? { prompt: options.prompt } : {}),
+      });
+      const result = await this.awaitTranscription(task, options.signal);
+      return result.result.trim();
+    });
+  }
+
   private static preferredModelsForLanguage(language = 'en'): string[] {
     const normalized = language.trim().toLowerCase();
     if (!normalized || normalized === 'auto') {
@@ -110,9 +184,7 @@ export class LocalWhisperService {
 
   static async transcribe(
     audioUri: string,
-    options:
-      | { modelName?: string; language?: string; wordTimestamps?: boolean; prompt?: string }
-      | string = {},
+    options: WhisperTranscribeOptions | string = {},
     language: string = 'en',
   ): Promise<TranscriptionResponse> {
     // Back-compat: existing callers pass (uri, modelName, language) positionally.
@@ -123,14 +195,19 @@ export class LocalWhisperService {
             language,
             wordTimestamps: false,
             prompt: undefined as string | undefined,
+            signal: undefined,
+            pcm16Wav: false,
           }
         : {
             modelName: options.modelName ?? 'base',
             language: options.language ?? language,
             wordTimestamps: options.wordTimestamps ?? false,
             prompt: options.prompt,
+            signal: options.signal,
+            pcm16Wav: options.pcm16Wav === true,
           };
     const modelName = opts.modelName;
+    if (opts.signal?.aborted) throw cancelled();
 
     if (!this.isAvailable()) {
       throw new Error(
@@ -160,7 +237,9 @@ export class LocalWhisperService {
     const modelPath = model.path;
 
     return this.runExclusive(async () => {
+      if (opts.signal?.aborted) throw cancelled();
       await this.ensureModelInitialized(modelPath);
+      if (opts.signal?.aborted) throw cancelled();
 
       if (!this.whisperContext) {
         throw new Error('Failed to initialize Whisper context. Please try again.');
@@ -171,9 +250,12 @@ export class LocalWhisperService {
       // whisper.rn accepts PCM WAV, while Android's recorder and imported files commonly use
       // M4A/MP3. Decode on-device and remove only the new temporary copy after inference.
       const convertedUri =
-        Platform.OS === 'android' ? await AndroidSpeech.convertToWav(audioUri) : null;
+        Platform.OS === 'android' && !opts.pcm16Wav
+          ? await AndroidSpeech.convertToWav(audioUri)
+          : null;
       try {
-        const { promise } = this.whisperContext.transcribe(convertedUri ?? audioUri, {
+        if (opts.signal?.aborted) throw cancelled();
+        const task = this.whisperContext.transcribe(convertedUri ?? audioUri, {
           language: opts.language,
           maxThreads: this.maxThreads,
           maxLen: opts.wordTimestamps ? 1 : 0,
@@ -181,7 +263,7 @@ export class LocalWhisperService {
           translate: false,
           ...(opts.prompt ? { prompt: opts.prompt } : {}),
         });
-        const result = await promise;
+        const result = await this.awaitTranscription(task, opts.signal);
 
         const duration = (Date.now() - startTime) / 1000;
 

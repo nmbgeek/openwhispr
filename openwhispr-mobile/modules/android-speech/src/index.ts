@@ -19,16 +19,39 @@ export interface AndroidLiveSpeechResult {
   error?: { code: string; message: string };
 }
 
+export type AndroidCaptureAudioEvent =
+  | {
+      type: 'audio';
+      sessionId: string;
+      pcmBase64: string;
+      sequence?: number;
+      frameOffset?: number;
+    }
+  | { type: 'level'; sessionId: string; level: number }
+  | { type: 'error'; sessionId: string; code: string; message: string };
+
+export interface AndroidCaptureAudioResult {
+  fileUri: string;
+  durationMs: number;
+  error?: { code: string; message: string };
+}
+
 type LiveSubscription = { remove(): void };
 
 interface NativeAndroidSpeech {
+  startCapture?(sessionId: string): Promise<void>;
+  stopCapture?(sessionId: string): Promise<AndroidCaptureAudioResult>;
+  cancelCapture?(sessionId: string): Promise<void>;
   startLive?(sessionId: string, mode: AndroidSpeechMode, locale: string): Promise<void>;
   stopLive?(sessionId: string): Promise<AndroidLiveSpeechResult>;
   cancelLive?(sessionId: string): Promise<void>;
-  addListener?(
-    eventName: 'live-speech',
-    listener: (event: AndroidLiveSpeechEvent) => void,
-  ): LiveSubscription;
+  addListener?: {
+    (eventName: 'live-speech', listener: (event: AndroidLiveSpeechEvent) => void): LiveSubscription;
+    (
+      eventName: 'capture-audio',
+      listener: (event: AndroidCaptureAudioEvent) => void,
+    ): LiveSubscription;
+  };
   convertToWav(audioUri: string): Promise<string>;
   getStatus(mode: AndroidSpeechMode, locale: string): Promise<AndroidSpeechStatus>;
   download(mode: AndroidSpeechMode, locale: string): Promise<void>;
@@ -78,6 +101,36 @@ export const AndroidSpeech = {
       typeof nativeModule.cancelLive === 'function' &&
       typeof nativeModule.addListener === 'function'
     );
+  },
+
+  isCaptureAvailable(): boolean {
+    return (
+      nativeModule !== null &&
+      typeof nativeModule.startCapture === 'function' &&
+      typeof nativeModule.stopCapture === 'function' &&
+      typeof nativeModule.cancelCapture === 'function' &&
+      typeof nativeModule.addListener === 'function'
+    );
+  },
+
+  async startCapture(sessionId: string): Promise<void> {
+    const start = requireModule().startCapture;
+    if (!start) throw new Error('Live Whisper requires an updated Android native build.');
+    await withCancellation(() => start.call(nativeModule, sessionId));
+  },
+
+  async stopCapture(sessionId: string): Promise<AndroidCaptureAudioResult> {
+    const stop = requireModule().stopCapture;
+    if (!stop) throw new Error('Live Whisper requires an updated Android native build.');
+    return withCancellation(() => stop.call(nativeModule, sessionId));
+  },
+
+  async cancelCapture(sessionId: string): Promise<void> {
+    await nativeModule?.cancelCapture?.(sessionId);
+  },
+
+  addCaptureListener(listener: (event: AndroidCaptureAudioEvent) => void): LiveSubscription {
+    return nativeModule?.addListener?.('capture-audio', listener) ?? { remove() {} };
   },
 
   async startLive(sessionId: string, mode: AndroidSpeechMode, locale: string): Promise<void> {

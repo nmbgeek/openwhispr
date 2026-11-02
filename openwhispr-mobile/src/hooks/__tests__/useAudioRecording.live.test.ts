@@ -1,3 +1,6 @@
+jest.mock('@/lib/localWhisperPrompt', () => ({
+  buildLocalWhisperPrompt: jest.fn(() => 'Captured dictionary'),
+}));
 import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { AppState } from 'react-native';
 import * as FileSystem from 'expo-file-system/legacy';
@@ -71,11 +74,30 @@ jest.mock('@/utils/expoAudio', () => ({
   isExpoAudioAvailable: () => true,
   getDefaultRecorderOptions: () => ({}),
 }));
+const mockPreviewFinish = jest.fn(async () => ({
+  text: 'Full Whisper recording.',
+  provider: 'local',
+}));
+const mockPreviewCancel = jest.fn(async () => undefined);
+let mockPreviewText: ((text: string) => void) | undefined;
+jest.mock('@/services/transcription/WhisperLivePreview', () => ({
+  WhisperLivePreview: {
+    prepare: jest.fn(async (_options, callbacks) => {
+      mockPreviewText = callbacks.onText;
+      return { pushPcm: jest.fn(), finish: mockPreviewFinish, cancel: mockPreviewCancel };
+    }),
+  },
+}));
 let mockListener: ((event: AndroidLiveSpeechEvent) => void) | null = null;
 const mockRemoveListener = jest.fn();
 jest.mock('../../../modules/android-speech/src', () => ({
   AndroidSpeech: {
     isLiveAvailable: jest.fn(() => true),
+    isCaptureAvailable: jest.fn(() => true),
+    startCapture: jest.fn(async () => undefined),
+    stopCapture: jest.fn(async () => ({ fileUri: 'file:///whisper.wav', durationMs: 3200 })),
+    cancelCapture: jest.fn(async () => undefined),
+    addCaptureListener: jest.fn(() => ({ remove: jest.fn() })),
     getStatus: jest.fn(async () => ({ status: 'available' })),
     startLive: jest.fn(async () => undefined),
     stopLive: jest.fn(async () => ({
@@ -245,8 +267,8 @@ test('backgrounding discards a live session instead of promising background spee
   expect(mockAddTranscript).not.toHaveBeenCalled();
 });
 
-test('Whisper preserves the Expo capture and batch transcription path', async () => {
-  mockModel = 'whisper-base';
+test('a restored unsupported model preserves the Expo capture and batch transcription path', async () => {
+  mockModel = 'parakeet';
   const { result } = renderHook(() => useAudioRecording({ liveTranscription: true }));
   await act(async () => {
     await result.current.startRecording();
@@ -457,7 +479,7 @@ test('backgrounding after Stop does not discard its committed recording', async 
   expect(mockAddTranscript).toHaveBeenCalledTimes(1);
 });
 
-test('a retention copy failure preserves the original WAV on a retryable failed row', async () => {
+test('a retention failure preserves original audio without claiming a retry row', async () => {
   jest.mocked(retainTranscriptAudio).mockRejectedValueOnce(new Error('Not enough storage'));
   const { result } = renderHook(() => useAudioRecording({ liveTranscription: true }));
   await act(async () => {
@@ -466,9 +488,34 @@ test('a retention copy failure preserves the original WAV on a retryable failed 
   await act(async () => {
     await expect(result.current.stopRecording()).rejects.toThrow('Not enough storage');
   });
-  expect(mockAddFailedTranscript).toHaveBeenCalledWith(
-    expect.objectContaining({ audioUrl: 'file:///live.wav', audioMimeType: 'audio/wav' }),
-  );
+  expect(mockAddFailedTranscript).not.toHaveBeenCalled();
   expect(FileSystem.deleteAsync).not.toHaveBeenCalledWith('file:///live.wav', expect.anything());
   expect(mockAddTranscript).not.toHaveBeenCalled();
+});
+
+test('Whisper uses native capture and recent drafts but saves the authoritative full recording', async () => {
+  mockModel = 'whisper-base';
+  const onComplete = jest.fn();
+  const { result } = renderHook(() => useAudioRecording({ liveTranscription: true, onComplete }));
+  await act(async () => {
+    await result.current.startRecording();
+  });
+  expect(AndroidSpeech.startCapture).toHaveBeenCalledWith('live-session');
+  expect(AndroidSpeech.startLive).not.toHaveBeenCalled();
+  expect(result.current.livePreviewIsRecent).toBe(true);
+  act(() => {
+    mockPreviewText?.('Recent words only');
+  });
+  expect(result.current.currentText).toBe('Recent words only');
+  expect(mockAddTranscript).not.toHaveBeenCalled();
+  await act(async () => {
+    await result.current.stopRecording();
+  });
+  expect(mockPreviewFinish).toHaveBeenCalledWith('file:///whisper.wav');
+  expect(mockAddTranscript).toHaveBeenCalledWith(
+    expect.objectContaining({ text: 'Full Whisper recording.' }),
+  );
+  expect(onComplete).toHaveBeenCalledWith('Full Whisper recording.');
+  expect(transcribeAndCleanup).not.toHaveBeenCalled();
+  expect(mockRecorder.record).not.toHaveBeenCalled();
 });

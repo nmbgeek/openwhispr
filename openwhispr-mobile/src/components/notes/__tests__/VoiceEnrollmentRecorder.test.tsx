@@ -133,6 +133,7 @@ beforeEach(() => {
     isRecording: false,
     isProcessing: false,
     isLiveTranscription: false,
+    livePreviewIsRecent: false,
     liveLevel: 0,
     currentText: '',
     isSupported: true,

@@ -172,6 +172,7 @@ export default function HomeScreen() {
     isSupported,
     currentText,
     isLiveTranscription,
+    livePreviewIsRecent,
     liveLevel,
     startRecording,
     stopRecording,
@@ -745,6 +746,7 @@ export default function HomeScreen() {
         amplitude={isLiveTranscription ? liveLevel : currentAmplitude}
         waveformData={isLiveTranscription ? [] : waveformData}
         liveTranscript={isLiveTranscription ? currentText : undefined}
+        livePreviewIsRecent={livePreviewIsRecent}
         durationSeconds={recordingDuration}
         onDone={handleRecordPress}
         onDiscard={cancelRecording}

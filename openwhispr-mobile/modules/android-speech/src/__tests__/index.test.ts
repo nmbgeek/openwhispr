@@ -64,6 +64,50 @@ describe('AndroidSpeech', () => {
     expect(nativeModule.addListener).toHaveBeenCalledWith('live-speech', listener);
   });
 
+  it('requires the capture API in addition to older ML Kit live support', async () => {
+    const nativeModule = {
+      startLive: jest.fn(),
+      stopLive: jest.fn(),
+      cancelLive: jest.fn(),
+      addListener: jest.fn(),
+    };
+    const { AndroidSpeech } = loadBridge('android', nativeModule);
+    expect(AndroidSpeech.isLiveAvailable()).toBe(true);
+    expect(AndroidSpeech.isCaptureAvailable()).toBe(false);
+    await expect(AndroidSpeech.startCapture('whisper-session')).rejects.toThrow(
+      'updated Android native build',
+    );
+    expect(nativeModule.startLive).not.toHaveBeenCalled();
+  });
+
+  it('uses the separate capture namespace and returns owned audio without invoking ML Kit', async () => {
+    const result = {
+      fileUri: 'file:///cache/transcript-audio/whisper.wav',
+      durationMs: 500,
+    };
+    const subscription = { remove: jest.fn() };
+    const nativeModule = {
+      startCapture: jest.fn().mockResolvedValue(undefined),
+      stopCapture: jest.fn().mockResolvedValue(result),
+      cancelCapture: jest.fn().mockResolvedValue(undefined),
+      addListener: jest.fn().mockReturnValue(subscription),
+      getStatus: jest.fn(),
+      download: jest.fn(),
+    };
+    const { AndroidSpeech } = loadBridge('android', nativeModule);
+    expect(AndroidSpeech.isCaptureAvailable()).toBe(true);
+    expect(AndroidSpeech.isLiveAvailable()).toBe(false);
+    const listener = jest.fn();
+    expect(AndroidSpeech.addCaptureListener(listener)).toBe(subscription);
+    expect(nativeModule.addListener).toHaveBeenCalledWith('capture-audio', listener);
+    await AndroidSpeech.startCapture('whisper-session');
+    await expect(AndroidSpeech.stopCapture('whisper-session')).resolves.toEqual(result);
+    expect(nativeModule.startCapture).toHaveBeenCalledWith('whisper-session');
+    expect(nativeModule.getStatus).not.toHaveBeenCalled();
+    expect(nativeModule.download).not.toHaveBeenCalled();
+    expect(nativeModule.cancelCapture).not.toHaveBeenCalled();
+  });
+
   it('passes the exact selected mode, locale, and local file to native recognition', async () => {
     const nativeModule = {
       transcribe: jest.fn().mockResolvedValue({ text: 'Recognized locally' }),

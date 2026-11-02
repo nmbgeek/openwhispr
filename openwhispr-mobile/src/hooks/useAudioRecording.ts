@@ -24,11 +24,11 @@ import { randomUUID } from '../lib/uuid';
 import type { TranscriptionProvider, TranscriptionRequest, TranscriptionResponse } from '../types';
 import { AndroidSpeech } from '../../modules/android-speech/src';
 import {
-  isMlKitModelKey,
-  mlKitLocale,
-  mlKitMode,
-  type MlKitModelKey,
-} from '../lib/localSpeechModels';
+  createAndroidLiveRecorder,
+  type AndroidLiveRecorder,
+  type AndroidLiveModel,
+} from '../services/transcription/AndroidLiveTranscription';
+import { isMlKitModelKey, mlKitLocale, mlKitMode } from '../lib/localSpeechModels';
 import {
   getExpoAudioModule,
   isExpoAudioAvailable,
@@ -75,7 +75,8 @@ type RetainedRecordingAudio = {
 
 type LiveRecordingSession = {
   id: string;
-  model: MlKitModelKey;
+  model: AndroidLiveModel;
+  recorder: AndroidLiveRecorder;
   locale: string;
   phase: 'starting' | 'recording' | 'stopping';
   cancelled: boolean;
@@ -103,6 +104,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentText, setCurrentText] = useState('');
   const [isLiveTranscription, setIsLiveTranscription] = useState(false);
+  const [livePreviewIsRecent, setLivePreviewIsRecent] = useState(false);
   const [liveLevel, setLiveLevel] = useState(0);
   const liveSessionRef = useRef<LiveRecordingSession | null>(null);
   const startingRef = useRef(false);
@@ -158,7 +160,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         if (session.phase === 'stopping' && session.retainHistory) return;
         session.cancelled = true;
         abandonedRef.current = true;
-        void AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+        void session.recorder.cancel().catch(() => undefined);
       }
     };
   }, []);
@@ -186,7 +188,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       jobRouteRef.current = cleanup
         ? snapshotTranscriptionJob('dictation')
         : { ...snapshotTranscriptionJob('dictation', []), cleanupUnavailable: CLEANUP_OFF };
-      let liveChoice: { model: MlKitModelKey; locale: string } | null = null;
+      let liveChoice: { model: AndroidLiveModel; locale: string } | null = null;
       if (
         options.liveTranscription &&
         Platform.OS === 'android' &&
@@ -206,6 +208,16 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
           const locale = mlKitLocale(useConfigStore.getState().config);
           if (!locale) throw new Error('Choose one transcription language for live ML Kit speech.');
           liveChoice = { model, locale };
+        } else if (!model || model === 'whisper-base') {
+          if (!AndroidSpeech.isCaptureAvailable()) {
+            throw new Error(
+              'Live Whisper needs the updated Android app. Install the latest native build.',
+            );
+          }
+          liveChoice = {
+            model: 'whisper-base',
+            locale: getPreferredTranscriptionLanguage() ?? 'auto',
+          };
         }
       }
 
@@ -227,16 +239,20 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
 
       if (liveChoice) {
         const { model, locale } = liveChoice;
-        const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
-        if (status.status !== 'available') {
-          throw new Error(
-            'The selected ML Kit model is not ready. Download or check it in AI Models.',
-          );
+        if (isMlKitModelKey(model)) {
+          const status = await AndroidSpeech.getStatus(mlKitMode(model), locale);
+          if (status.status !== 'available') {
+            throw new Error(
+              'The selected ML Kit model is not ready. Download or check it in AI Models.',
+            );
+          }
         }
         if (!mountedRef.current || !appActiveRef.current) return;
+        const id = `live-${randomUUID()}`;
         const session: LiveRecordingSession = {
-          id: `live-${randomUUID()}`,
+          id,
           model,
+          recorder: createAndroidLiveRecorder(id, model, locale),
           locale,
           phase: 'starting',
           cancelled: false,
@@ -247,7 +263,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         liveSessionRef.current = session;
         setCurrentText('');
         setLiveLevel(0);
-        session.subscription = AndroidSpeech.addLiveListener((event) => {
+        session.subscription = session.recorder.addListener((event) => {
           if (
             !mountedRef.current ||
             event.sessionId !== session.id ||
@@ -262,14 +278,15 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
             if (session.phase === 'recording') void stopRef.current().catch(() => undefined);
           }
         });
-        await AndroidSpeech.startLive(session.id, mlKitMode(model), locale);
+        await session.recorder.start();
         if (session.cancelled || !mountedRef.current) {
-          await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+          await session.recorder.cancel().catch(() => undefined);
           return;
         }
         session.phase = 'recording';
         openRef.current = true;
         setIsLiveTranscription(true);
+        setLivePreviewIsRecent(model === 'whisper-base');
         setIsRecording(true);
         if (session.error) void stopRef.current().catch(() => undefined);
         return;
@@ -316,7 +333,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       if (session?.phase === 'starting') {
         session.subscription?.remove();
         liveSessionRef.current = null;
-        await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+        await session.recorder.cancel().catch(() => undefined);
       }
       if (abandonedRef.current || !mountedRef.current) return;
       // Permission denial is a normal user state — surfaced by onError as a
@@ -596,7 +613,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     let sourceUri: string | null = null;
     let nativeStopped = false;
     try {
-      const result = await AndroidSpeech.stopLive(session.id);
+      const result = await session.recorder.stop();
       nativeStopped = true;
       openRef.current = false;
       sourceUri = result.fileUri;
@@ -627,17 +644,9 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
         if (retained) await discardRetainedAudio(retained);
         return;
       }
-      // A failed copy must not delete the original native WAV. Keep that cache
-      // file on the failed row so the user can retry after freeing storage.
-      if (!retained && sourceUri && session.retainHistory) {
-        retained = {
-          id: createTranscriptId(),
-          audioUrl: sourceUri,
-          audioFileName: fileNameFromUri(sourceUri),
-          audioMimeType: 'audio/wav',
-        };
-        sourceUri = null;
-      }
+      // Retention failure preserves the original WAV. A retry row is only safe
+      // once the managed audio store has accepted ownership.
+      if (!retained && sourceUri && session.retainHistory) sourceUri = null;
       if (retained) {
         if (!saveToHistory) await discardRetainedAudio(retained);
         else await addFailedRecording(retained, 'local', error);
@@ -646,7 +655,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       if (mountedRef.current) options.onError?.(failure);
       throw failure;
     } finally {
-      if (!nativeStopped) await AndroidSpeech.cancelLive(session.id).catch(() => undefined);
+      if (!nativeStopped) await session.recorder.cancel().catch(() => undefined);
       session.subscription?.remove();
       if (liveSessionRef.current === session) liveSessionRef.current = null;
       openRef.current = false;
@@ -710,7 +719,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
       liveSession.cancelled = true;
       abandonedRef.current = true;
       liveSession.subscription?.remove();
-      await AndroidSpeech.cancelLive(liveSession.id).catch(() => undefined);
+      await liveSession.recorder.cancel().catch(() => undefined);
       // A claimed stop owns the returned WAV and deletes it after seeing cancellation.
       if (liveSession.phase !== 'stopping') liveSessionRef.current = null;
       openRef.current = false;
@@ -772,6 +781,7 @@ export function useAudioRecording(options: UseAudioRecordingOptions = {}) {
     isProcessing,
     currentText,
     isLiveTranscription,
+    livePreviewIsRecent,
     liveLevel,
     isSupported,
     startRecording,

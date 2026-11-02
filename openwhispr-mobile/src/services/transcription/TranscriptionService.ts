@@ -9,6 +9,7 @@ import {
 } from '../../config/constants';
 import { LocalWhisperService } from './LocalWhisperService';
 import { LocalTranscriptionService } from './LocalTranscriptionService';
+import { buildLocalWhisperPrompt } from '../../lib/localWhisperPrompt';
 import { useAuthStore } from '../../store/useAuthStore';
 import { getClientVersionHeader } from '../../lib/apiClient';
 import {
@@ -20,7 +21,6 @@ import {
   GROQ_PROMPT_CHARS,
   MAX_SHARED_KEYTERMS,
   PROMPT_HEAD_TERMS,
-  WHISPER_PROMPT_CHARS,
   dictionaryPromptLimit,
   formatDictionaryPrompt,
   promptLimitKeepingPersonal,
@@ -874,26 +874,12 @@ export class TranscriptionService {
     }
 
     const startedAt = Date.now();
-    // Dictionary words + (dictation-only) snippet triggers as the Whisper initial
-    // prompt, so on-device/private transcription recognizes them too. (Parakeet has
-    // no prompt input; the facade drops it on that branch.)
-    // Shared words fill at most the decoder window, within the same caps as
-    // OpenWhispr Cloud (as on desktop); personal words are never cut.
-    const promptTiers = buildDictationHintTiers(isDictationContext(requestContext));
-    const prompt = formatDictionaryPrompt(
-      promptTiers,
-      promptLimitKeepingPersonal(promptTiers, WHISPER_PROMPT_CHARS),
-      {
-        sharedChars: sharedDictionaryPromptChars(WHISPER_PROMPT_CHARS),
-        sharedWords: MAX_SHARED_KEYTERMS,
-        totalTerms: PROMPT_HEAD_TERMS,
-      },
-    );
+    const prompt = buildLocalWhisperPrompt(requestContext);
     const { getPickedLocalModel } =
       require('@/lib/inferenceRouting') as typeof import('@/lib/inferenceRouting');
     const response = await LocalTranscriptionService.transcribe(audioUri, {
       language,
-      prompt: prompt || undefined,
+      prompt,
       model: getPickedLocalModel(requestContext === 'file' ? 'upload' : 'dictation'),
     });
     if (__DEV__) {

@@ -1138,7 +1138,7 @@ it('explains what Local Mode means for chat', () => {
   mockScope = 'noteChat';
   render(<WorkflowSettingsScreen />);
   expect(
-    screen.getByText('In Local Mode chat asks before sending notes off this iPhone.'),
+    screen.getByText('In Local Mode chat asks before sending notes off this phone.'),
   ).toBeTruthy();
 });
 
@@ -1212,11 +1212,11 @@ it('locks no mode outside Local Mode', () => {
 it.each([
   [
     'cloud',
-    'On-Device turns on Local Mode: dictation stays on this iPhone, notes you make stay private, and chat asks before leaving it.',
+    'On-Device turns on Local Mode: dictation stays on this phone, notes you make stay private, and chat asks before leaving it.',
   ],
   [
     'private',
-    'Local Mode is on: dictation stays on this iPhone, notes you make stay private, and chat asks before leaving it. Choose OpenWhispr Cloud or Bring Your Own Key to turn it off.',
+    'Local Mode is on: dictation stays on this phone, notes you make stay private, and chat asks before leaving it. Choose OpenWhispr Cloud or Bring Your Own Key to turn it off.',
   ],
 ])('explains Local Mode on the Dictation page in %s mode', (mode, note) => {
   mockConfig = { defaultMode: mode };

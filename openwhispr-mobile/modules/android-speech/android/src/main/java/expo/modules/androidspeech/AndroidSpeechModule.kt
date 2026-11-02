@@ -29,6 +29,7 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableJob
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
@@ -46,76 +47,59 @@ class AndroidSpeechModule : Module() {
   // Downloads and inference are explicitly exclusive. Status checks use independent clients,
   // so returning from settings cannot cancel or replace an in-flight transcription.
   private val activeOperation = AtomicReference<Job?>(null)
-  private val liveSession = AtomicReference<AndroidLiveSpeechSession?>(null)
+  private val activeSession = AtomicReference<AndroidAudioSession?>(null)
   private val cancelledSessionIds = ConcurrentHashMap.newKeySet<String>()
   private val cancelledSessionOrder = ConcurrentLinkedQueue<String>()
   private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
   override fun definition() = ModuleDefinition {
     Name("AndroidSpeech")
-    Events("live-speech")
+    Events("live-speech", "capture-audio")
 
     AsyncFunction("startLive") Coroutine { sessionId: String, mode: String, locale: String ->
-      if (sessionId.isBlank() || sessionId.length > 200) {
-        throw speechError("INVALID_SESSION", "A valid recording session ID is required.")
-      }
-      if (cancelledSessionIds.contains(sessionId)) {
-        throw speechError("CANCELLED", "This recording session was already cancelled.")
-      }
-      val lifetime = SupervisorJob()
-      if (!activeOperation.compareAndSet(null, lifetime)) {
-        lifetime.cancel()
-        throw speechError("BUSY", "Another on-device speech operation is still running.")
-      }
-      var session: AndroidLiveSpeechSession? = null
-      var recognizer: SpeechRecognizer? = null
-      try {
+      startSession(sessionId) { lifetime ->
         val client = createRecognizer(mode, locale)
-        recognizer = client
-        val created = AndroidLiveSpeechSession(sessionId, context(), client, lifetime) { event ->
-          sendEvent("live-speech", event)
-        }
-        session = created
-        liveSession.set(created)
-        if (cancelledSessionIds.contains(sessionId)) {
-          throw speechError("CANCELLED", "This recording session was already cancelled.")
-        }
-        created.start()
-      } catch (error: Throwable) {
-        withContext(NonCancellable) {
-          if (session != null) session.cancel() else {
-            lifetime.cancelAndJoin()
-            runCatching { recognizer?.close() }
+        try {
+          AndroidLiveSpeechSession(sessionId, context(), client, lifetime) { event ->
+            sendEvent("live-speech", event)
           }
-          liveSession.compareAndSet(session, null)
-          activeOperation.compareAndSet(lifetime, null)
+        } catch (error: Throwable) {
+          runCatching { client.close() }
+          throw error
         }
-        throw error
       }
     }
 
     AsyncFunction("stopLive") Coroutine { sessionId: String ->
-      val session = liveSession.get()?.takeIf { it.id == sessionId }
+      val session = (activeSession.get() as? AndroidLiveSpeechSession)?.takeIf { it.id == sessionId }
         ?: throw speechError("STALE_SESSION", "This recording session is no longer active.")
-      try {
-        session.stop()
-      } finally {
-        liveSession.compareAndSet(session, null)
-        activeOperation.compareAndSet(session.lifetime, null)
-      }
+      stopSession(session)
     }
 
     AsyncFunction("cancelLive") Coroutine { sessionId: String ->
       rememberCancelledSession(sessionId)
-      val session = liveSession.get()?.takeIf { it.id == sessionId }
-      if (session != null) {
-        try {
-          session.cancel()
-        } finally {
-          liveSession.compareAndSet(session, null)
-          activeOperation.compareAndSet(session.lifetime, null)
-        }
+      val session = (activeSession.get() as? AndroidLiveSpeechSession)?.takeIf { it.id == sessionId }
+      if (session != null) cancelSession(session)
+    }
+
+    AsyncFunction("startCapture") Coroutine { sessionId: String ->
+      startSession(sessionId) { lifetime ->
+        AndroidAudioCaptureSession(sessionId, context(), lifetime, emitPcmToJs = true, emit = { event ->
+          sendEvent("capture-audio", event)
+        })
       }
+    }
+
+    AsyncFunction("stopCapture") Coroutine { sessionId: String ->
+      val session = (activeSession.get() as? AndroidAudioCaptureSession)?.takeIf { it.id == sessionId }
+        ?: throw speechError("STALE_SESSION", "This recording session is no longer active.")
+      stopSession(session)
+    }
+
+    AsyncFunction("cancelCapture") Coroutine { sessionId: String ->
+      rememberCancelledSession(sessionId)
+      val session = (activeSession.get() as? AndroidAudioCaptureSession)?.takeIf { it.id == sessionId }
+      if (session != null) cancelSession(session)
     }
 
     AsyncFunction("convertToWav") Coroutine { audioUri: String ->
@@ -221,15 +205,10 @@ class AndroidSpeechModule : Module() {
     }
 
     AsyncFunction("cancel") Coroutine { ->
-      val session = liveSession.get()
+      val session = activeSession.get()
       if (session != null) {
         rememberCancelledSession(session.id)
-        try {
-          session.cancel()
-        } finally {
-          liveSession.compareAndSet(session, null)
-          activeOperation.compareAndSet(session.lifetime, null)
-        }
+        cancelSession(session)
       } else activeOperation.get()?.cancelAndJoin()
     }
 
@@ -257,12 +236,62 @@ class AndroidSpeechModule : Module() {
 
     OnDestroy {
       activeOperation.get()?.cancel()
-      val session = liveSession.getAndSet(null)
+      val session = activeSession.getAndSet(null)
       if (session != null) {
         cleanupScope.launch {
           try { session.cancel() } finally { cleanupScope.cancel() }
         }
       } else cleanupScope.cancel()
+    }
+  }
+
+  private suspend fun startSession(sessionId: String, factory: (CompletableJob) -> AndroidAudioSession) {
+    if (sessionId.isBlank() || sessionId.length > 200) {
+      throw speechError("INVALID_SESSION", "A valid recording session ID is required.")
+    }
+    if (cancelledSessionIds.contains(sessionId)) {
+      throw speechError("CANCELLED", "This recording session was already cancelled.")
+    }
+    val lifetime = SupervisorJob()
+    if (!activeOperation.compareAndSet(null, lifetime)) {
+      lifetime.cancel()
+      throw speechError("BUSY", "Another on-device speech operation is still running.")
+    }
+    var session: AndroidAudioSession? = null
+    try {
+      val created = factory(lifetime)
+      session = created
+      activeSession.set(created)
+      if (cancelledSessionIds.contains(sessionId)) {
+        throw speechError("CANCELLED", "This recording session was already cancelled.")
+      }
+      created.start()
+    } catch (error: Throwable) {
+      withContext(NonCancellable) {
+        if (session != null) session.cancel() else lifetime.cancelAndJoin()
+        activeSession.compareAndSet(session, null)
+        activeOperation.compareAndSet(lifetime, null)
+      }
+      throw error
+    }
+  }
+
+  private suspend fun stopSession(session: AndroidAudioSession): Map<String, Any> {
+    try {
+      return session.stop()
+    } finally {
+      rememberCancelledSession(session.id)
+      activeSession.compareAndSet(session, null)
+      activeOperation.compareAndSet(session.lifetime, null)
+    }
+  }
+
+  private suspend fun cancelSession(session: AndroidAudioSession) {
+    try {
+      session.cancel()
+    } finally {
+      activeSession.compareAndSet(session, null)
+      activeOperation.compareAndSet(session.lifetime, null)
     }
   }
 

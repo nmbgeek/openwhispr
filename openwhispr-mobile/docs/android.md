@@ -48,7 +48,7 @@ The live-session tests also open and release the device microphone to check canc
 
 ## Check speech recognition on a device
 
-Whisper transcribes after you stop recording. For live text, open **Account > AI Models > Dictation**, choose **On-Device**, and select a ready ML Kit Basic or Advanced model. Home and Note Editor then display changing partial text while recording. Only the final transcript is saved. Failed sessions retain audio for retry; completed transcripts release their audio, following the existing privacy policy. Stopping a live recording does not run a second transcription pass.
+For live text, open **Account > AI Models > Dictation**, choose **On-Device**, and select Whisper base or a ready ML Kit Basic or Advanced model. Home and Note Editor then display changing partial text while recording. Only the final transcript is saved. Failed sessions retain audio for retry; completed transcripts release their audio, following the existing privacy policy. ML Kit saves its final live result without another transcription pass. Whisper shows a rolling eight-second recent preview, then transcribes the entire retained recording once when you tap Done. The final text can differ from the draft. Whisper preview updates depend on device speed and may use more battery.
 
 Basic file uploads process at playback speed. The app streams their decoded audio because the Basic service on the tested Samsung rejects the SDK's whole-file recognition mode. Advanced file uploads use whole-file recognition. Both routes stay on the device.
 

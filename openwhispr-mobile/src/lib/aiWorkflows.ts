@@ -31,19 +31,19 @@ export const ON_DEVICE_CLEANUP_UNSUPPORTED_NOTE =
 // Dictation owns Local Mode: On-Device dictation turns it on, and the other modes turn it off. Note
 // formatting and the voice assistant keep their own choices; notes made in Local Mode are private.
 export const LOCAL_MODE_DICTATION_NOTES = {
-  on: 'Local Mode is on: dictation stays on this iPhone, notes you make stay private, and chat asks before leaving it. Choose OpenWhispr Cloud or Bring Your Own Key to turn it off.',
-  off: 'On-Device turns on Local Mode: dictation stays on this iPhone, notes you make stay private, and chat asks before leaving it.',
+  on: 'Local Mode is on: dictation stays on this phone, notes you make stay private, and chat asks before leaving it. Choose OpenWhispr Cloud or Bring Your Own Key to turn it off.',
+  off: 'On-Device turns on Local Mode: dictation stays on this phone, notes you make stay private, and chat asks before leaving it.',
 };
 
 // What Local Mode means for chat.
 export const ON_DEVICE_MODE_NOTES: Partial<Record<MobileInferenceScope, string>> = {
-  noteChat: 'In Local Mode chat asks before sending notes off this iPhone.',
+  noteChat: 'In Local Mode chat asks before sending notes off this phone.',
 };
 
 // Outside Cloud dictation, cleaning with OpenWhispr Cloud is a separate Cloud pass, which needs a
 // signed-in account.
 export const CLOUD_CLEANUP_NEEDS_ACCOUNT_NOTE =
-  'OpenWhispr Cloud cleans transcripts made on this iPhone or with your own key only for a signed-in account, so cleanup is skipped until you sign in.';
+  'OpenWhispr Cloud cleans transcripts made on this phone or with your own key only for a signed-in account, so cleanup is skipped until you sign in.';
 
 export function cloudAccessFor(user: AuthUser | null): CloudAccess {
   if (!user) return 'none';
@@ -52,7 +52,7 @@ export function cloudAccessFor(user: AuthUser | null): CloudAccess {
 
 // OpenWhispr Cloud runs for cleanup in Local Mode or Bring Your Own Key without an account to run
 // it, so it is skipped (cleanupTranscript). In Local Mode that is a Cloud cleanup the user saved;
-// unset or held there automatically, it runs on this iPhone without an account (workflowSelection).
+// unset or held there automatically, it runs on this phone without an account (workflowSelection).
 export function cloudCleanupNeedsAccount(
   config: UserConfig | null,
   activeMode: ProcessingMode,
@@ -78,7 +78,7 @@ export function cleanupRunsOnDevice(
 // What a workflow runs: its saved selection, else the mode's default (unsetSelection). In Local
 // Mode, a Cloud selection held automatically (pinnedInference) when dictation left another mode runs
 // as if unsaved, since Local Mode's default already uses Cloud wherever the user's access lets it:
-// without a session uploads stay on this iPhone, and without an account so does cleanup. Leaving
+// without a session uploads stay on this phone, and without an account so does cleanup. Leaving
 // Local Mode finds it on Cloud again.
 export function workflowSelection(
   config: UserConfig | null,
@@ -125,8 +125,8 @@ export function parseWorkflow(value: unknown): MobileInferenceScope | null {
   return WORKFLOWS.find((scope) => scope === value) ?? null;
 }
 
-// What a workflow with no saved selection runs. Local Mode keeps dictation on this iPhone, and uses
-// OpenWhispr Cloud for uploads and cleanup when the account can, else this iPhone. Note formatting,
+// What a workflow with no saved selection runs. Local Mode keeps dictation on this phone, and uses
+// OpenWhispr Cloud for uploads and cleanup when the account can, else this phone. Note formatting,
 // note chat and the voice assistant use OpenWhispr Cloud when unset in Cloud and Local Mode, and
 // Bring Your Own Key dictation waits for a provider before cleanup or the voice assistant.
 export function unsetSelection(

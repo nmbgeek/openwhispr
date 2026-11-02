@@ -69,7 +69,7 @@ class AndroidLiveSpeechSessionTest {
     val beforeFiles = liveFiles()
     val beforeRecordings = activeRecordings()
     val fixture = createSession {}
-    val start = async(Dispatchers.IO) { fixture.session.start() }
+    val start = async(Dispatchers.IO) { runCatching { fixture.session.start() } }
     try {
       fixture.session.cancel()
       runCatching { start.await() }

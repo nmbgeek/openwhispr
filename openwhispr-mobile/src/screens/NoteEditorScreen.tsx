@@ -754,6 +754,7 @@ export default function NoteEditorScreen({
     isProcessing,
     currentText,
     isLiveTranscription,
+    livePreviewIsRecent,
     startRecording,
     stopRecording,
   } = useAudioRecording({
@@ -1417,7 +1418,9 @@ export default function NoteEditorScreen({
 
           {isRecording && (currentText || isLiveTranscription) ? (
             <Text accessibilityLiveRegion="polite" className="mb-2 text-[15px] text-link">
-              {isLiveTranscription ? `Live · ${currentText || 'Listening…'}` : currentText}
+              {isLiveTranscription
+                ? `${livePreviewIsRecent ? 'Recent preview' : 'Live'} · ${currentText || 'Listening…'}`
+                : currentText}
             </Text>
           ) : null}
 
